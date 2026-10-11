@@ -28,6 +28,7 @@ export PATH
 readonly STATE_DIR="${OC_STATE_DIR:-$HOME/.local/state/oc-afk}"
 readonly SIGNAL_TARGET="${OC_SIGNAL_TARGET:-signal}"
 readonly ANSWER_LIMIT=3500
+# shellcheck disable=SC2016 # $HOME must expand on the remote host, not here.
 readonly REMOTE_SELF='$HOME/.agents/skills/opencode-afk/scripts/oc-afk'
 
 notify=0
@@ -88,11 +89,14 @@ readonly TITLE="$2"
 shift 2
 readonly PROMPT="$*"
 
-# shellcheck disable=SC2086 # the model flag is a deliberate two-word expansion.
-model_arg=""
-if [ -n "${OC_MODEL:-}" ]; then
-    model_arg="--model $OC_MODEL"
-fi
+# Run OpenCode with the model of this host, unless OC_MODEL overrides it.
+run_opencode() {
+    if [ -n "${OC_MODEL:-}" ]; then
+        opencode run --model "$OC_MODEL" "$@"
+    else
+        opencode run "$@"
+    fi
+}
 
 mkdir -p "$STATE_DIR"
 
@@ -131,9 +135,9 @@ for row in rows:
 
 status=0
 if [ -n "$session_id" ]; then
-    opencode run $model_arg --auto --format json --session "$session_id" "$PROMPT" >"$RUN_LOG" 2>&1 || status=$?
+    run_opencode --auto --format json --session "$session_id" "$PROMPT" >"$RUN_LOG" 2>&1 || status=$?
 else
-    opencode run $model_arg --auto --format json --title "$TITLE" "$PROMPT" >"$RUN_LOG" 2>&1 || status=$?
+    run_opencode --auto --format json --title "$TITLE" "$PROMPT" >"$RUN_LOG" 2>&1 || status=$?
 fi
 
 python3 - "$RUN_LOG" >"$ANSWER" <<'PY'

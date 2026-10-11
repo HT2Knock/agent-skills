@@ -10,14 +10,24 @@
 # A session is identified by an exact title inside the project and is created on
 # the first run, so one title is one durable session.
 #
-# Model: the host's own OpenCode configuration is the default. Set OC_MODEL to
-# override it, for example OC_MODEL=opencode-go/gpt-6-luna.
+# Model: the OpenCode configuration of the host that runs the job decides the
+# model. Set OC_MODEL to override it.
 set -euo pipefail
+
+# ssh sessions and systemd units often start with a bare PATH.
+for dir in "$HOME/.local/bin" /opt/homebrew/bin /usr/local/bin "$HOME/.linuxbrew/bin"; do
+    if [ -d "$dir" ]; then
+        case ":$PATH:" in
+            *":$dir:"*) ;;
+            *) PATH="$dir:$PATH" ;;
+        esac
+    fi
+done
+export PATH
 
 readonly STATE_DIR="${OC_STATE_DIR:-$HOME/.local/state/oc-afk}"
 readonly SIGNAL_TARGET="${OC_SIGNAL_TARGET:-signal}"
 readonly ANSWER_LIMIT=3500
-readonly DEFAULT_MODEL="openai/gpt-6-luna"
 readonly REMOTE_SELF='$HOME/.agents/skills/opencode-afk/scripts/oc-afk'
 
 notify=0
@@ -55,7 +65,6 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-# shellcheck disable=SC2016 # $HOME must expand on the remote host, not here.
 if [ -n "$host" ]; then
     if [ "$background" = 1 ]; then
         echo "oc-afk: --host does not support --bg" >&2
@@ -79,10 +88,16 @@ readonly TITLE="$2"
 shift 2
 readonly PROMPT="$*"
 
+# shellcheck disable=SC2086 # the model flag is a deliberate two-word expansion.
+model_arg=""
+if [ -n "${OC_MODEL:-}" ]; then
+    model_arg="--model $OC_MODEL"
+fi
+
 mkdir -p "$STATE_DIR"
 
 if [ "$background" = 1 ]; then
-    self="$(readlink -f "$0")"
+    self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
     log="$STATE_DIR/bg-$(date +%Y%m%dT%H%M%S).log"
     nohup "$self" --notify "$PROJECT" "$TITLE" "$PROMPT" >"$log" 2>&1 &
     echo "started pid=$!"
@@ -99,7 +114,6 @@ cd "$PROJECT"
 stamp="$(date +%Y%m%dT%H%M%S)"
 readonly RUN_LOG="$STATE_DIR/$stamp.jsonl"
 readonly ANSWER="$STATE_DIR/$stamp.answer"
-readonly MODEL="${OC_MODEL:-$DEFAULT_MODEL}"
 
 session_id="$(opencode session list --format json -n 200 2>/dev/null | python3 -c '
 import json, sys
@@ -117,9 +131,9 @@ for row in rows:
 
 status=0
 if [ -n "$session_id" ]; then
-    opencode run --model "$MODEL" --auto --format json --session "$session_id" "$PROMPT" >"$RUN_LOG" 2>&1 || status=$?
+    opencode run $model_arg --auto --format json --session "$session_id" "$PROMPT" >"$RUN_LOG" 2>&1 || status=$?
 else
-    opencode run --model "$MODEL" --auto --format json --title "$TITLE" "$PROMPT" >"$RUN_LOG" 2>&1 || status=$?
+    opencode run $model_arg --auto --format json --title "$TITLE" "$PROMPT" >"$RUN_LOG" 2>&1 || status=$?
 fi
 
 python3 - "$RUN_LOG" >"$ANSWER" <<'PY'
@@ -154,7 +168,7 @@ else
     echo "session: new, titled \"$TITLE\""
 fi
 echo "project: $PROJECT"
-echo "model: $MODEL"
+echo "model: ${OC_MODEL:-host default}"
 echo "exit: $status"
 echo "log: $RUN_LOG"
 echo

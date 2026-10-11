@@ -91,6 +91,7 @@ PROMPT="$*"
 
 # The shell does not expand ~ inside a variable, and a remote run needs the path
 # expanded against the target host's home.
+# shellcheck disable=SC2088 # the tilde is matched literally here, not expanded.
 case "$PROJECT" in
     "~") PROJECT="$HOME" ;;
     "~/"*) PROJECT="$HOME/${PROJECT:2}" ;;

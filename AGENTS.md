@@ -1,11 +1,14 @@
 # AGENTS.md — agent-skills
 
-One shared skills directory for the local agents.
+Shared skills for the local agents.
 
 ## Layout
 
-`skills/<name>/SKILL.md`, with `name` and `description` in the frontmatter.
-Both Hermes and OpenCode read `skills/` directly.
+- `skills/<name>/SKILL.md` — read by both Hermes and OpenCode.
+- `hermes-skills/<name>/SKILL.md` — read by Hermes only, for skills that teach
+  the Hermes gateway. `opencode-afk` lives here.
+- OpenCode-only skills live in the dotfiles repo under
+  `.config/opencode/skills/`, which OpenCode reads as its global skills dir.
 
 ## Rules
 

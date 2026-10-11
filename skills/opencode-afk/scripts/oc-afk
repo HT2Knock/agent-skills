@@ -84,10 +84,18 @@ if [ "$#" -lt 3 ]; then
     exit 2
 fi
 
-readonly PROJECT="$1"
-readonly TITLE="$2"
+PROJECT="$1"
+TITLE="$2"
 shift 2
-readonly PROMPT="$*"
+PROMPT="$*"
+
+# The shell does not expand ~ inside a variable, and a remote run needs the path
+# expanded against the target host's home.
+case "$PROJECT" in
+    "~") PROJECT="$HOME" ;;
+    "~/"*) PROJECT="$HOME/${PROJECT:2}" ;;
+esac
+readonly PROJECT TITLE PROMPT
 
 # Run OpenCode with the model of this host, unless OC_MODEL overrides it.
 run_opencode() {

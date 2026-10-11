@@ -29,6 +29,12 @@ Run on the Mac over SSH:
 oc-afk --host macbook <project-dir> <session-title> <prompt...>
 ```
 
+Quote the path so the target host expands it, not the calling shell:
+
+```bash
+oc-afk --host macbook '~/Documents/T2Knock/JT-notes' "jt notes" "..."
+```
+
 Each host keeps its own configured model. Set `OC_MODEL` to override it. `--host`
 does not support `--bg`.
 

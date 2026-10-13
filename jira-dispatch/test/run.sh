@@ -169,6 +169,11 @@ cat >"$TMP/config.json" <<JSON
       "prepare": ["/usr/bin/true"],
       "launch": ["$TMP/fake-launch.sh", "{key}", "{summary}", "{prompt}"],
       "promptTemplate": "Ticket {key}: {summary}\nURL: {url}\nWorkspace: {workspace}\nwork the ticket fully."
+    },
+    "LEAN": {
+      "workspace": "$TMP/ws-lean/{key}",
+      "launch": ["$TMP/fake-launch.sh", "{key}", "{summary}", "{prompt}"],
+      "promptTemplate": "Ticket {key}: {summary}"
     }
   }
 }
@@ -291,6 +296,12 @@ unknown="$(payload OTHER-903 jira:issue_assigned agent-ready "$ME" chg-8 labels 
 code="$(post "$unknown")"
 check "unknown project: ignored" "ignored" "$(kind_of)"
 check "unknown project: nothing started" "2" "$(run_count)"
+
+# prepare is optional. A project that omits it must still dispatch.
+lean="$(payload LEAN-904 jira:issue_assigned agent-ready "$ME" chg-9 labels agent-ready)"
+code="$(post "$lean")"
+check "a project with no prepare still starts" "202" "$code"
+check "a project with no prepare: one run" "3" "$(run_count)"
 
 # ---------------------------------------------------------------- catch-up
 

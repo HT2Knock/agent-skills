@@ -44,7 +44,7 @@ POST /jira/hook
   write the run record, prompt and raw payload
   answer Jira 202
   ... then, in the background:
-  run `prepare`               (for ADAM: scripts/ws-start.sh <KEY>)
+  run `prepare` when set
   start `launch` detached     (opencode run, one session titled <KEY>)
   wait for the session, then drop the lock
 ```
@@ -100,30 +100,31 @@ curl -s http://127.0.0.1:8787/healthz
 | `allowedEvents` | Accepted `webhookEvent` values. Empty means any. |
 | `triggerLabels` | The issue must carry one of these. Empty means any. |
 | `lockTtlHours` | A lock older than this is stale and is taken over. It covers a receiver that died mid-session, not the length of a run. |
-| `projects` | Per project key: `workspace`, `prepareDir`, `prepare`, `launch`, `promptTemplate`. |
+| `projects` | Per project key: `workspace`, `launch` and `promptTemplate` are required; `prepare` and `prepareDir` are optional. |
 
 Placeholders: `{key}`, `{project}`, `{summary}`, `{url}`, `{workspace}`.
 `launch` may also use `{prompt}`, which is the rendered template as a single
 argument. Commands run argv-style, without a shell, so a value cannot change
 the shape of the command.
 
-## Project mapping for ADAM
+## Project mapping
 
-`~/Documents/adam/scripts/ws-start.sh` already does the right thing for a
-ticket: it adds the `pim` and `pim-ui` worktrees, indexes each into
-codebase-memory as `pim-<KEY>` and `pim-ui-<KEY>`, and links them. The example
-config calls it as `prepare` and runs the session in `ws.<KEY>`.
+`prepare` is optional. Leave it out and the session starts in `workspace` with
+no setup. The agent then decides for itself whether the ticket needs a worktree,
+which is the default in `config.example.json`.
 
-**These scripts are currently deleted in the `~/Documents/adam` working tree.**
-`git -C ~/Documents/adam status` shows `D scripts/...`. They exist in the last
-commit. Restore them before the first real run, or point `prepare` at
-something else:
+The trade: an empty `prepare` gives the decision to the session, and the
+receiver no longer guarantees isolation. If the agent works in the shared
+checkout, two tickets can collide. The prompt template asks it to say which it
+chose, so the run record and the ticket comment show the answer.
 
-```bash
-git -C ~/Documents/adam checkout -- scripts templates AGENTS.md README.md .gitignore
+Use `prepare` when a ticket class always needs the same setup, for example a
+worktree, a dependency install, or a generated file. The receiver runs it once
+before the session and stops the run when it fails.
+
+```json
+"prepare": ["git", "-C", "~/Documents/adam/airrlabs-mono", "worktree", "add", "{workspace}", "-b", "feat/{key}"]
 ```
-
-That command discards uncommitted deletions. Check `git status` first.
 
 ## Files the receiver writes
 
@@ -157,8 +158,8 @@ port, sends signed and unsigned payloads, and asserts what was started.
   receiver starts, to pick up tickets that became ready while it was down.
 - `launch` output is not collected back. The session reports by commenting on
   the ticket.
-- The cross-repo `prepare` step takes 10-15s. The webhook has already answered
-  by then, and the lock is held for the whole run.
+- `prepare` runs before the session, so a slow one delays the session start. It
+  does not delay the webhook response, and the lock is held for the whole run.
 - There is no anti-replay check on a signed body. The webhook secret is the
   trust boundary, so a replay already requires the secret, which allows
   forging any event.

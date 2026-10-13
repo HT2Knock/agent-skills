@@ -1,0 +1,7 @@
+ts	phase	decision	why	evidence	result
+2026-10-13T14:41:50Z	start	started the run; no earlier rows exist	user asked for autonomous work while away	model deepseek-v4.1-flash, branch jira-dispatch	open
+2026-10-13T14:41:50Z	frame	finish condition: jira-dispatch/test/run.sh exits 0, covering signature, dedupe, lock, actor filter, work-mode gate and prompt rendering	a check that passes or fails, and runs offline with no Jira or opencode dependency	jira-dispatch/test/run.sh	open
+2026-10-13T14:41:50Z	frame	isolation: git worktree at ~/.agents-worktrees/jira-dispatch on branch jira-dispatch off agent-skills main	the run must not collide with the user's checked-out work	git worktree add	done
+2026-10-13T14:41:50Z	frame	stop conditions: 12 iterations or 60 minutes, whichever comes first	bounded run; at a cap, stop and write what blocked it	decisions.tsv	open
+2026-10-13T14:46:11Z	build	receiver is a Go stdlib HTTP service: verify HMAC, filter event, dedupe by event id, per-ticket lock, write run record, launch detached	Jira times out a slow endpoint, so the webhook answers before the session finishes; stdlib keeps it one binary with no dependencies	jira-dispatch/main.go,hook.go,dispatch.go	build ok
+2026-10-13T14:46:11Z	verify	test/run.sh passes 26 checks: signature, work-mode gate, actor filter, label filter, unknown project, duplicate event id, in-flight lock, prompt rendering, launch argv	the contract is fully checkable offline, so the finish condition needs no Jira and no opencode	jira-dispatch/test/run.sh	FINISH CONDITION PASSED

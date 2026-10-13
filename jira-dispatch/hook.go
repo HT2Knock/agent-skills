@@ -151,6 +151,9 @@ const (
 	KindIgnore    = "ignored"
 	KindDuplicate = "duplicate"
 	KindInFlight  = "in-flight"
+	// KindRejected means the receiver accepted the event and could not act on
+	// it. It maps to a 5xx so Jira retries.
+	KindRejected = "rejected"
 )
 
 type Decision struct {
@@ -177,6 +180,13 @@ func Evaluate(cfg *Config, p *Payload) Decision {
 	}
 	if len(cfg.TriggerLabels) > 0 && !hasAnyLabel(p.Issue.Fields.Labels, cfg.TriggerLabels) {
 		return ignore("issue has none of the trigger labels")
+	}
+	// A session comments on its own ticket. Without this rule, that comment is
+	// an issue_updated event, the label is still present, and the receiver
+	// starts a second session on the work the first one just reported. Accept
+	// an update only when it added a trigger label.
+	if len(cfg.TriggerLabels) > 0 && p.WebhookEvent == "jira:issue_updated" && !p.addsTriggerLabel(cfg.TriggerLabels) {
+		return ignore("this change did not add a trigger label")
 	}
 	if _, ok := cfg.Projects[p.ProjectKey()]; !ok {
 		return ignore("no project mapping for " + p.ProjectKey())
@@ -208,6 +218,24 @@ func hasAnyLabel(have []string, want []string) bool {
 			if strings.EqualFold(h, w) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// addsTriggerLabel reports whether this change added one of the labels. Jira
+// lists the label field's before and after values as space or comma separated
+// text.
+func (p *Payload) addsTriggerLabel(want []string) bool {
+	for _, item := range p.Changelog.Items {
+		if !strings.EqualFold(item.Field, "labels") {
+			continue
+		}
+		added := strings.FieldsFunc(item.ToString, func(r rune) bool {
+			return r == ' ' || r == ','
+		})
+		if hasAnyLabel(added, want) {
+			return true
 		}
 	}
 	return false

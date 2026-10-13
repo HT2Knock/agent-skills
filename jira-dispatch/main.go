@@ -108,12 +108,20 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 
 	decision := Evaluate(s.cfg, payload)
 	if decision.Kind == KindDispatch {
+		// An ignored event is not recorded. The secret is the trust boundary:
+		// only Jira can sign a body, so a replay is not a new risk, and
+		// recording ignored events would drop the ones that arrive while work
+		// mode is off.
 		decision = s.disp.Dispatch(payload, body)
 	}
 
 	status := http.StatusOK
-	if decision.Kind == KindDispatch {
+	switch decision.Kind {
+	case KindDispatch:
 		status = http.StatusAccepted
+	case KindRejected:
+		// Ask Jira to retry, instead of dropping the event.
+		status = http.StatusInternalServerError
 	}
 	s.log.Printf("%s %s -> %s (%s)", payload.WebhookEvent, payload.Issue.Key, decision.Kind, decision.Reason)
 	writeResponse(w, status, response{Kind: decision.Kind, Reason: decision.Reason, Key: payload.Issue.Key})

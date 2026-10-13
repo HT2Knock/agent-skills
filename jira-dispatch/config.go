@@ -116,6 +116,12 @@ func (c *Config) validate() error {
 	if c.Listen == "" {
 		return fmt.Errorf("listen must not be empty")
 	}
+	// This is the only filter that fails open when empty, and an empty list
+	// would let any Jira user who can add the trigger label start an
+	// auto-approved session. Require it.
+	if len(c.AllowedActors) == 0 {
+		return fmt.Errorf("allowedActors must name at least one account, or every actor is accepted")
+	}
 	for key, proj := range c.Projects {
 		if len(proj.Launch) == 0 {
 			return fmt.Errorf("project %s: launch must not be empty", key)

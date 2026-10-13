@@ -27,6 +27,12 @@ This receiver is opt-in twice:
 Both defaults are in `config.example.json`. Add the label in Jira when you want
 the agent to pick the ticket up. Remove it when you do not.
 
+An update starts a run only when the change **added** the label. A comment, a
+summary edit, or any other change is ignored. This matters: the session
+comments on its own ticket as you, so without that rule the session would
+trigger itself and loop. A fresh assignment starts a run with no label change
+needed, which is the common case.
+
 ## What happens to one accepted event
 
 ```
@@ -40,12 +46,13 @@ POST /jira/hook
   ... then, in the background:
   run `prepare`               (for ADAM: scripts/ws-start.sh <KEY>)
   start `launch` detached     (opencode run, one session titled <KEY>)
-  drop the lock
+  wait for the session, then drop the lock
 ```
 
 The response is sent before the session runs, because Jira times out a slow
 endpoint. The run record on disk is the durable evidence that a ticket was
-dispatched.
+dispatched. The lock is held for the whole session, so a second event on the
+same ticket is refused while the first session runs.
 
 ## Install
 
@@ -75,6 +82,9 @@ tailscale funnel --bg 8787
 
 # 6. check
 curl -s http://127.0.0.1:8787/healthz
+
+# 7. pick up anything that became ready while the receiver was down
+./scripts/catchup.sh
 ```
 
 ## Config
@@ -86,10 +96,10 @@ curl -s http://127.0.0.1:8787/healthz
 | `stateDir` | Run records, prompts, spooled payloads, logs, seen set, locks. |
 | `workModePath` | Marker file. When absent, the receiver accepts events and starts nothing. |
 | `jiraBaseUrl` | Used to build the ticket link inside the prompt. |
-| `allowedActors` | Emails or account ids allowed to trigger a run. Empty means any. |
+| `allowedActors` | Emails or account ids allowed to trigger a run. Must not be empty. |
 | `allowedEvents` | Accepted `webhookEvent` values. Empty means any. |
 | `triggerLabels` | The issue must carry one of these. Empty means any. |
-| `lockTtlHours` | How long one ticket stays single-flight. |
+| `lockTtlHours` | A lock older than this is stale and is taken over. It covers a receiver that died mid-session, not the length of a run. |
 | `projects` | Per project key: `workspace`, `prepareDir`, `prepare`, `launch`, `promptTemplate`. |
 
 Placeholders: `{key}`, `{project}`, `{summary}`, `{url}`, `{workspace}`.
@@ -139,12 +149,16 @@ port, sends signed and unsigned payloads, and asserts what was started.
 
 ## Known gaps
 
-- The session is created with `--title <KEY>`. A second run on the same ticket
-  creates a second session. `lockTtlHours` and the dedupe set cover the common
-  case; resolving the title to an existing session id is not implemented.
-- No startup catch-up. An event delivered while the receiver was down is lost.
-  The fix is one JQL query at start, not a poll.
+- The session is created with `--title <KEY>`. The ticket lock and the label
+  rule stop a second session while one runs, but a new hand-off after the first
+  session ends creates a second session rather than continuing the first.
+  Resolving the title to an existing session id is not implemented.
+- The catch-up is not automatic. Run `scripts/catchup.sh` by hand, or when the
+  receiver starts, to pick up tickets that became ready while it was down.
 - `launch` output is not collected back. The session reports by commenting on
   the ticket.
 - The cross-repo `prepare` step takes 10-15s. The webhook has already answered
-  by then.
+  by then, and the lock is held for the whole run.
+- There is no anti-replay check on a signed body. The webhook secret is the
+  trust boundary, so a replay already requires the secret, which allows
+  forging any event.

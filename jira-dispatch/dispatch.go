@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -48,48 +49,70 @@ func (d *Dispatcher) path(parts ...string) string {
 // in the background. It returns as soon as the local bookkeeping is durable,
 // so the webhook endpoint answers before Jira times out.
 func (d *Dispatcher) Dispatch(p *Payload, raw []byte) Decision {
-	seen, err := d.markSeen(p)
+	seen, err := d.MarkSeen(p)
 	if err != nil {
-		return ignore("state error: " + err.Error())
+		return Decision{Kind: KindRejected, Reason: "cannot record the event: " + err.Error()}
 	}
 	if seen {
 		return Decision{Kind: KindDuplicate, Reason: "event already handled: " + p.EventID()}
 	}
 
+	// Every failure past this point unmarks the event, so a Jira retry is not
+	// swallowed by the dedupe set.
+	reject := func(reason string) Decision {
+		d.UnmarkSeen(p)
+		return Decision{Kind: KindRejected, Reason: reason}
+	}
+
 	held, err := d.lockHeld(p.Issue.Key)
 	if err != nil {
-		return ignore("lock error: " + err.Error())
+		return reject("cannot take the lock: " + err.Error())
 	}
 	if held {
 		return Decision{Kind: KindInFlight, Reason: "a run for " + p.Issue.Key + " is already in flight"}
 	}
 
+	// The workspace path carries the ticket key, so it is only known now.
 	proj := d.cfg.Projects[p.ProjectKey()]
+	proj.Workspace = Substitute(proj.Workspace, ticketValues(p))
+	proj.PrepareDir = Substitute(proj.PrepareDir, ticketValues(p))
+
 	if err := os.MkdirAll(proj.Workspace, 0o755); err != nil {
-		return ignore("cannot create workspace: " + err.Error())
+		return reject("cannot create the workspace: " + err.Error())
 	}
 
 	record, err := d.recordRun(p, proj, raw)
 	if err != nil {
-		return ignore("cannot write run record: " + err.Error())
+		return reject("cannot write the run record: " + err.Error())
 	}
 
 	go d.run(record, proj)
-	return Decision{Kind: KindDispatch, Reason: "started session for " + p.Issue.Key}
+	return Decision{Kind: KindDispatch, Reason: "started a session for " + p.Issue.Key}
 }
 
-// markSeen records the event id. It returns true when the event was already
+// ticketValues are the placeholders known before the workspace is resolved.
+func ticketValues(p *Payload) map[string]string {
+	return map[string]string{
+		"{key}":     p.Issue.Key,
+		"{project}": p.ProjectKey(),
+	}
+}
+
+// seenPath is the dedupe marker for one event.
+func (d *Dispatcher) seenPath(p *Payload) string {
+	sum := sha256.Sum256([]byte(p.EventID()))
+	return filepath.Join(d.path("seen"), hex.EncodeToString(sum[:])+".json")
+}
+
+// MarkSeen records the event id. It returns true when the event was already
 // recorded. The create is exclusive, so two concurrent deliveries cannot both
 // win.
-func (d *Dispatcher) markSeen(p *Payload) (bool, error) {
-	dir := d.path("seen")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+func (d *Dispatcher) MarkSeen(p *Payload) (bool, error) {
+	if err := os.MkdirAll(d.path("seen"), 0o755); err != nil {
 		return false, err
 	}
-	sum := sha256.Sum256([]byte(p.EventID()))
-	file := filepath.Join(dir, hex.EncodeToString(sum[:])+".json")
 
-	f, err := os.OpenFile(file, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(d.seenPath(p), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
 			return true, nil
@@ -100,8 +123,16 @@ func (d *Dispatcher) markSeen(p *Payload) (bool, error) {
 	return false, json.NewEncoder(f).Encode(p)
 }
 
-// lockHeld reports whether a run for this ticket is still in flight. A lock
-// older than lockTtlHours is stale and is taken over.
+// UnmarkSeen forgets the event id, so a later retry can be dispatched.
+func (d *Dispatcher) UnmarkSeen(p *Payload) {
+	if err := os.Remove(d.seenPath(p)); err != nil && !os.IsNotExist(err) {
+		d.log.Printf("cannot unmark event %s: %v", p.EventID(), err)
+	}
+}
+
+// lockHeld reports whether a run for this ticket is still in flight. The lock
+// lives for the whole session. A lock older than lockTtlHours is stale, which
+// covers a receiver that died mid-run, and is taken over.
 func (d *Dispatcher) lockHeld(key string) (bool, error) {
 	dir := d.path("lock")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -235,24 +266,38 @@ func (d *Dispatcher) run(r *RunRecord, proj Project) {
 		}
 	}
 
-	if err := StartDetached(r.Argv, proj.Workspace, logFile); err != nil {
+	cmd, err := StartDetached(r.Argv, proj.Workspace, logFile)
+	if err != nil {
 		d.log.Printf("%s: launch failed: %v", r.Key, err)
 		fmt.Fprintf(logFile, "launch failed: %v\n", err)
 		return
 	}
 	d.log.Printf("%s: session started: %s", r.Key, strings.Join(r.Argv, " "))
+
+	// Hold the ticket lock for the whole session, so a second event on the
+	// same ticket cannot start a second session. Waiting also reaps the child.
+	if err := cmd.Wait(); err != nil {
+		d.log.Printf("%s: session exited with an error: %v", r.Key, err)
+		fmt.Fprintf(logFile, "session exited with an error: %v\n", err)
+	}
 }
 
-// StartDetached starts argv without waiting for it to finish.
-func StartDetached(argv []string, dir string, out io.Writer) error {
+// StartDetached starts argv without waiting for it to finish. The child gets
+// its own session, so restarting the receiver does not signal a running
+// session.
+func StartDetached(argv []string, dir string, out io.Writer) (*exec.Cmd, error) {
 	if len(argv) == 0 {
-		return fmt.Errorf("empty argv")
+		return nil, fmt.Errorf("empty argv")
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Stdout = out
 	cmd.Stderr = out
-	return cmd.Start()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return cmd, nil
 }
 
 // Substitute replaces placeholders in one string.

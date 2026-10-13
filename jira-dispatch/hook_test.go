@@ -97,12 +97,83 @@ func TestEvaluateFilters(t *testing.T) {
 }
 
 func TestEmptyFilterListsAcceptAnything(t *testing.T) {
+	// Evaluate is permissive by design; LoadConfig rejects an empty
+	// allowedActors, so this state is not reachable from a config file.
 	cfg := testConfig(t)
 	cfg.AllowedActors = nil
 	cfg.TriggerLabels = nil
 	p := testPayload(t, "jira:issue_assigned", "ADAM-1", nil, "anyone@example.com")
 	if got := Evaluate(cfg, p); got.Kind != KindDispatch {
 		t.Fatalf("empty filters must accept anything, got %s (%s)", got.Kind, got.Reason)
+	}
+}
+
+func TestValidateRejectsEmptyActors(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Projects = map[string]Project{
+		"ADAM": {Workspace: "/tmp/ws", Launch: []string{"true"}, PromptTemplate: "x"},
+	}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("an empty allowedActors must be rejected, or any actor can start a session")
+	}
+	cfg.AllowedActors = []string{"me@example.com"}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("a named actor must be accepted, got %v", err)
+	}
+}
+
+func TestEvaluateIgnoresACommentOnTheTicket(t *testing.T) {
+	// A session comments on its own ticket. That must not start another
+	// session, or the run loops on its own output.
+	cfg := testConfig(t)
+	p := testPayload(t, "jira:issue_updated", "ADAM-1", []string{"agent-ready"}, "me@example.com")
+	p.Changelog.Items = []ChangelogItem{{Field: "comment", ToString: "opened a draft PR"}}
+	if got := Evaluate(cfg, p); got.Kind != KindIgnore {
+		t.Fatalf("a comment must be ignored, got %s (%s)", got.Kind, got.Reason)
+	}
+}
+
+func TestEvaluateIgnoresAnEditThatDidNotAddTheLabel(t *testing.T) {
+	cfg := testConfig(t)
+	p := testPayload(t, "jira:issue_updated", "ADAM-1", []string{"agent-ready"}, "me@example.com")
+	p.Changelog.Items = []ChangelogItem{{Field: "summary", ToString: "A new summary"}}
+	if got := Evaluate(cfg, p); got.Kind != KindIgnore {
+		t.Fatalf("a non-label edit must be ignored, got %s (%s)", got.Kind, got.Reason)
+	}
+}
+
+func TestEvaluateAcceptsAnAssignmentWithTheLabel(t *testing.T) {
+	// An assignment carries no changelog, so the label rule must not block it.
+	cfg := testConfig(t)
+	p := testPayload(t, "jira:issue_assigned", "ADAM-1", []string{"agent-ready"}, "me@example.com")
+	p.Changelog = Changelog{}
+	if got := Evaluate(cfg, p); got.Kind != KindDispatch {
+		t.Fatalf("an assignment must be accepted, got %s (%s)", got.Kind, got.Reason)
+	}
+}
+
+func TestAddsTriggerLabel(t *testing.T) {
+	p := testPayload(t, "jira:issue_updated", "ADAM-1", []string{"agent-ready"}, "me@example.com")
+	cases := []struct {
+		name  string
+		items []ChangelogItem
+		want  bool
+	}{
+		{"added alone", []ChangelogItem{{Field: "labels", ToString: "agent-ready"}}, true},
+		{"added with others", []ChangelogItem{{Field: "labels", ToString: "chore agent-ready"}}, true},
+		{"added comma separated", []ChangelogItem{{Field: "labels", ToString: "chore, agent-ready"}}, true},
+		{"removed instead", []ChangelogItem{{Field: "labels", FromString: "agent-ready", ToString: ""}}, false},
+		{"another label", []ChangelogItem{{Field: "labels", ToString: "chore"}}, false},
+		{"another field", []ChangelogItem{{Field: "summary", ToString: "agent-ready"}}, false},
+		{"nothing", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p.Changelog.Items = tc.items
+			if got := p.addsTriggerLabel([]string{"agent-ready"}); got != tc.want {
+				t.Fatalf("want %v, got %v", tc.want, got)
+			}
+		})
 	}
 }
 

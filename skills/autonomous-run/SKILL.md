@@ -37,7 +37,3 @@ Send one message: the finish condition, the iterations run, what landed, what wa
 ## Wake mechanism
 
 The run needs a start and a heartbeat. Something outside the run must supply both: a scheduled task, or an event. An OpenCode session is the executor, with the worktree as its workspace. `jira-dispatch` in this repo starts one session per Jira ticket. For many independent units, use a kanban board in place of one run.
-
-## Attribution
-
-Borrowed from the `autonomous-run` playbook of `poteto-mode` in pstack by Lauren Tan, through the `pstack-claude` port by Michael Denyer (MIT). The upstream text is kept verbatim in `references/poteto-autonomous-run.md`.

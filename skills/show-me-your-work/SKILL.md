@@ -62,14 +62,16 @@ At the end of the run, before handing back, check the log told the truth. Walk t
 
 Correct the log, not the story. The audit never edits or removes a row, even an invented one. When a row records neither a real decision nor a real action, or its claim or evidence is wrong, add a row that supersedes it with what actually happened and a pointer that resolves. This audit does not check rows outside this run's stretches. If this run's own work shows one of them is wrong, supersede it like any wrong call.
 
-## Cross-model review of the trail
+## Independent review of the trail
 
-Before handing back, spawn a subagent on a different model family from the one that did the work. Self-review is not a substitute. The subagent reads the audit trail and the run's transcript, then flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
+Before handing back, dispatch the `reviewer` agent. It runs with fresh context, never sees your reasoning, and reads the audit trail and the run's transcript from disk. It flags what the user should pay attention to. Not a redo of the work, a scan for what is suboptimal or risky.
 
 - Decisions logged with weak or absent evidence.
 - Verification steps skipped or claimed without proof in the transcript.
 - Choices that look risky in hindsight (premature, scope-creeping, papering over a symptom).
 - Gaps the user would otherwise miss on a casual skim.
+
+The reviewer's model is pinned in the agent config, so the review keeps running when another provider fails. Point the reviewer at a second model family when one answers, and treat the correlation break as a bonus: fresh context with the list above is what finds the issues. When no second family answers, run the pinned reviewer and say so in the Attention section.
 
 Every reply for a run that produced a trail ends with an "Attention" section. Lead with the reviewer's model on its own line (`reviewed by <model>`), then list each flag pointing to specific rows or moments. "No flags" is a valid value. The model name is not.
 

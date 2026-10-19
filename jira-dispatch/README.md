@@ -164,9 +164,11 @@ that `catchup` uses. Leave step 5 out when you only poll. If an admin creates th
 webhook later, both sources can run: the receiver dedupes them by changelog id.
 
 The watch interval is adaptive: 60 seconds after a dispatch, then 120, 300, 600
-and 900 seconds after each empty pass, with ±10% jitter. Pass
-`--min-interval <s>` or `--max-interval <s>`, or set
-`JIRA_DISPATCH_POLL_MIN` and `JIRA_DISPATCH_POLL_MAX`, to change the band. The
+and 900 seconds after each empty pass, with ±10% jitter. The installed agent
+uses those defaults; change `minIntervalSeconds` and `maxIntervalSeconds` in
+`src/poll.ts` and re-run `install` to change its band. A manual run also accepts
+`--min-interval <s>` and `--max-interval <s>`, or the
+`JIRA_DISPATCH_POLL_MIN` and `JIRA_DISPATCH_POLL_MAX` environment variables. The
 watch process holds `poll.lock` for its lifetime; a manual `poll` exits when the
 watch is running. Use `poll --dry-run` to inspect a pass without posting or
 writing state.

@@ -177,8 +177,7 @@ cat >"$TMP/config.json" <<JSON
       "promptTemplate": "Ticket {key}: {summary}\nURL: {url}\nWorkspace: {workspace}\nwork the ticket fully."
     },
     "LEAN": {
-      "workspace": "$TMP/ws-lean/{key}",
-      "promptTemplate": "Ticket {key}: {summary}"
+      "workspace": "$TMP/ws-lean/{key}"
     }
   }
 }
@@ -186,7 +185,7 @@ JSON
 
 export TEST_WEBHOOK_SECRET="$SECRET"
 export JIRA_DISPATCH_CONFIG="$TMP/config.json"
-bun run "$TOOL_DIR/src/server.ts" >"$TMP/stdout.log" 2>"$TMP/stderr.log" &
+bun run "$TOOL_DIR/src/cli.ts" serve >"$TMP/stdout.log" 2>"$TMP/stderr.log" &
 receiver_pid=$!
 
 for _ in $(seq 1 100); do
@@ -287,6 +286,8 @@ check "unknown project: nothing started" "2" "$(run_count)"
 lean="$(payload LEAN-904 jira:issue_assigned agent-ready "$ME" chg-9 labels agent-ready)"
 check "a project with no prepare still starts" "202" "$(post "$lean")"
 check "a project with no prepare: one run" "3" "$(run_count)"
+check "no promptTemplate: the default prompt names the ticket" "yes" "$(grep -q 'LEAN-904' "$STATE"/spool/LEAN-904.*.prompt.txt && echo yes || echo no)"
+check "no promptTemplate: the default prompt points at the skills" "yes" "$(grep -q 'autonomous-run' "$STATE"/spool/LEAN-904.*.prompt.txt && echo yes || echo no)"
 
 # ---------------------------------------------------------------- catch-up
 
@@ -302,7 +303,7 @@ before="$(run_count)"
 out="$(PATH="$TMP/bin:$PATH" \
     JIRA_DISPATCH_URL="http://$addr/jira/hook" \
     JIRA_DISPATCH_SECRET_FILE="$TMP/secret.env" \
-    "$TOOL_DIR/scripts/catchup.sh" "$TMP/config.json" 2>&1)" || true
+    bun run "$TOOL_DIR/src/cli.ts" catchup --config "$TMP/config.json" 2>&1)" || true
 check "catch-up reports the ready ticket" "yes" "$(printf '%s' "$out" | grep -q 'ADAM-920' && echo yes || echo no)"
 check "catch-up starts the ready ticket" "$((before + 1))" "$(run_count)"
 check "catch-up reports a dispatch" "yes" "$(printf '%s' "$out" | grep -q 'dispatched' && echo yes || echo no)"
@@ -310,8 +311,24 @@ check "catch-up reports a dispatch" "yes" "$(printf '%s' "$out" | grep -q 'dispa
 out="$(PATH="$TMP/bin:$PATH" \
     JIRA_DISPATCH_URL="http://$addr/jira/hook" \
     JIRA_DISPATCH_SECRET_FILE="$TMP/secret.env" \
-    "$TOOL_DIR/scripts/catchup.sh" "$TMP/config.json" 2>&1)" || true
+    bun run "$TOOL_DIR/src/cli.ts" catchup --config "$TMP/config.json" 2>&1)" || true
 check "catch-up is idempotent" "$((before + 1))" "$(run_count)"
+
+# ---------------------------------------------------------------- work-mode CLI
+
+check "work-mode reports the marker on" "work mode on" "$(bun run "$TOOL_DIR/src/cli.ts" work-mode status --config "$TMP/config.json")"
+bun run "$TOOL_DIR/src/cli.ts" work-mode off --config "$TMP/config.json" >/dev/null
+check "work-mode off removes the marker" "no" "$(present "$WORKMODE")"
+bun run "$TOOL_DIR/src/cli.ts" work-mode on --config "$TMP/config.json" >/dev/null
+check "work-mode on writes the marker" "yes" "$(present "$WORKMODE")"
+
+# ---------------------------------------------------------------- install
+
+HOME="$TMP/home" JIRA_DISPATCH_SECRET_FILE="$TMP/home/secret.env" \
+    bun run "$TOOL_DIR/src/cli.ts" install --config "$TMP/home/config.json" --dry-run >"$TMP/install.out" 2>&1
+check "install writes a config" "yes" "$(present "$TMP/home/config.json")"
+check "install config has no promptTemplate" "no" "$(grep -q promptTemplate "$TMP/home/config.json" && echo yes || echo no)"
+check "install writes the launchd plist" "yes" "$(present "$TMP/home/Library/LaunchAgents/com.ht2knock.jira-dispatch.plist")"
 
 # ---------------------------------------------------------------- result
 

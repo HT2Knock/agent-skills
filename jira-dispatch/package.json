@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "bun run src/server.ts",
+    "start": "bun run src/cli.ts serve",
+    "build": "bun build src/cli.ts --compile --outfile dist/jira-dispatch",
     "test": "./test/run.sh",
     "lint": "oxlint src test",
-    "format": "oxfmt src test package.json .oxfmtrc.json .fallowrc.json",
-    "format:check": "oxfmt --check src test package.json .oxfmtrc.json .fallowrc.json"
+    "format": "oxfmt src test config.example.json package.json .oxfmtrc.json .fallowrc.json",
+    "format:check": "oxfmt --check src test config.example.json package.json .oxfmtrc.json .fallowrc.json"
   },
   "dependencies": {
     "@opencode/client": "^2.0.32"

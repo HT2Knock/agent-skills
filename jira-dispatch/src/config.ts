@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { defaultPromptTemplate } from "./prompt.ts"
 
 // One accepted ticket becomes one OpenCode session in one workspace.
 export type Project = {
@@ -10,6 +11,7 @@ export type Project = {
   prepareDir?: string
   // Runs once before the session, argv form, no shell. A failure stops the run.
   prepare?: string[]
+  // Filled from defaultPromptTemplate when the file omits it.
   // Placeholders: {key} {project} {summary} {url} {workspace}
   promptTemplate: string
 }
@@ -54,7 +56,15 @@ const TOP_LEVEL_KEYS = new Set([
 
 const PROJECT_KEYS = new Set(["workspace", "prepareDir", "prepare", "promptTemplate"])
 
-function expandHome(path: string): string {
+export function defaultConfigPath(): string {
+  return join(homedir(), ".config", "jira-dispatch", "config.json")
+}
+
+export function defaultSecretPath(): string {
+  return join(homedir(), ".config", "jira-dispatch", "secret.env")
+}
+
+export function expandHome(path: string): string {
   if (!path) return path
   if (path === "~") return homedir()
   if (path.startsWith("~/")) return join(homedir(), path.slice(2))
@@ -98,12 +108,17 @@ export function loadConfig(path: string): Config {
     for (const field of Object.keys(project)) {
       if (!PROJECT_KEYS.has(field)) throw new Error(`project ${key}: unknown key "${field}"`)
     }
-    project.workspace = expandHome(project.workspace)
-    project.prepareDir = expandHome(project.prepareDir ?? project.workspace)
+    applyDefaults(project)
   }
 
   validate(cfg)
   return cfg
+}
+
+function applyDefaults(project: Project): void {
+  project.workspace = expandHome(project.workspace)
+  project.prepareDir = expandHome(project.prepareDir ?? project.workspace)
+  project.promptTemplate ||= defaultPromptTemplate
 }
 
 function validate(cfg: Config): void {
@@ -121,12 +136,6 @@ function validate(cfg: Config): void {
     if (!project.workspace) throw new Error(`project ${key}: workspace must not be empty`)
     if (!project.promptTemplate) throw new Error(`project ${key}: promptTemplate must not be empty`)
   }
-}
-
-export function secret(cfg: Config): string {
-  const value = process.env[cfg.secretEnv] ?? ""
-  if (!value) throw new Error(`environment variable ${cfg.secretEnv} is empty`)
-  return value
 }
 
 // A missing marker means work is off, so the receiver starts nothing.

@@ -168,7 +168,10 @@ cat >"$TMP/config.json" <<JSON
   "allowedEvents": ["jira:issue_assigned", "jira:issue_updated"],
   "triggerLabels": ["agent-ready"],
   "lockTtlHours": 6,
-  "opencode": { "baseUrl": "$fake_url" },
+  "opencode": {
+    "baseUrl": "$fake_url",
+    "model": { "providerID": "anthropic", "id": "claude-sonnet-5-5", "variant": "high" }
+  },
   "projects": {
     "ADAM": {
       "workspace": "$TMP/ws/{key}",
@@ -244,6 +247,7 @@ else
     check "a session was created" "yes" "no"
 fi
 check "session title is the ticket key" "yes" "$(has "$FAKE_LOG" '"title":"ADAM-900"')"
+check "the configured model is passed to the session" "yes" "$(has "$FAKE_LOG" '"model":{"providerID":"anthropic","id":"claude-sonnet-5-5","variant":"high"}')"
 check "session location is the expanded workspace" "yes" "$(has "$FAKE_LOG" "\"directory\":\"$TMP/ws/ADAM-900\"")"
 check "the prompt was sent to the session" "yes" "$(has "$FAKE_LOG" "work the ticket fully")"
 check "the prompt carried the ticket summary" "yes" "$(has "$FAKE_LOG" "Ticket ADAM-900: Fix the assortment variant")"

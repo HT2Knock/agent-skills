@@ -98,7 +98,9 @@ POST /jira/hook
   run `prepare` when set
   client.session.create({ title: <KEY>, location: workspace })
   client.session.prompt({ sessionID, text })
-  client.session.wait({ sessionID }) then drop the lock
+  client.session.wait({ sessionID })
+    on a transport timeout: poll session.active() until the session ends
+  then drop the lock
 ```
 
 The run record on disk is the durable evidence that a ticket was dispatched. The
@@ -249,6 +251,21 @@ already loads the AGENTS.md files and advertises each skill by its description,
 so the prompt does not repeat either. Set `promptTemplate` when a project needs
 a different prompt.
 
+### Model
+
+Pin the model for every session the receiver creates:
+
+```json
+"opencode": {
+  "model": { "providerID": "anthropic", "id": "claude-sonnet-5-5", "variant": "high" }
+}
+```
+
+The provider must be authenticated in OpenCode. Run `opencode models` to list the
+provider and model ids. `variant` is optional; use one of the variants that the
+model advertises. The setting applies to new sessions. To change a session that
+is already running, switch its model in the OpenCode UI.
+
 ## Project mapping
 
 `prepare` is optional. Leave it out and the session starts in `workspace` with
@@ -302,7 +319,7 @@ No Jira and no real OpenCode. The check starts the receiver on a free port and a
 fake OpenCode server that records every request, then asserts what the receiver
 asked for: the session title, the workspace, the prompt text, and the wait. It
 also covers the default prompt, the `poll`, `catchup`, `work-mode` and `install`
-subcommands. 80 checks.
+subcommands. 81 checks.
 
 ## Known gaps
 
@@ -322,5 +339,6 @@ subcommands. 80 checks.
 - There is no anti-replay check on a signed body. The webhook secret is the trust
   boundary, so a replay already requires the secret, which allows forging any
   event.
-- `client.session.wait` maps to an experimental API route. If OpenCode changes
-  it, the lock hold is the part that breaks.
+- `client.session.wait` maps to an experimental API route. A transport timeout
+  now polls `session.active()` and holds the lock until the session ends, but a
+  change to the route still breaks the wait.

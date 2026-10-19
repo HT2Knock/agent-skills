@@ -304,7 +304,7 @@ cat "${FAKE_SEARCH:-/dev/null}"
 EOF
 chmod +x "$TMP/bin/atlassian-cli"
 cat >"$TMP/catchup-search.json" <<EOF
-[{"id":"10002","key":"ADAM-920","fields":{"summary":"Catch-up ticket","labels":["agent-ready"],"updated":"2026-10-13T09:00:00.000+0700","assignee":{"emailAddress":"$ME"},"issuetype":{"name":"Bug"},"priority":{"name":"High"}}}]
+[{"key":"ADAM-920","summary":"Catch-up ticket","labels":["agent-ready"],"updated":"2026-10-13T09:00:00.000+0700","assignee":{"emailAddress":"$ME"}}]
 EOF
 printf 'TEST_WEBHOOK_SECRET=%s\n' "$SECRET" >"$TMP/secret.env"
 
@@ -327,7 +327,7 @@ check "catch-up is idempotent" "$((before + 1))" "$(run_count)"
 
 issue_json() { # key id updated -> one search result
     cat <<JSON
-[{"id":"$2","key":"$1","fields":{"summary":"Poll ticket $1","labels":["agent-ready"],"updated":"$3","assignee":{"emailAddress":"$ME"},"issuetype":{"name":"Bug"},"priority":{"name":"High"}}}]
+[{"key":"$1","summary":"Poll ticket $1","labels":["agent-ready"],"updated":"$3","assignee":{"emailAddress":"$ME"}}]
 JSON
 }
 
@@ -356,7 +356,7 @@ check "poll reports the ready ticket" "yes" "$(printf '%s' "$out" | grep -q 'ADA
 check "poll starts the ready ticket" "$((poll_base + 1))" "$(run_count)"
 check "poll reports a dispatch" "yes" "$(printf '%s' "$out" | grep -q 'dispatched' && echo yes || echo no)"
 check "poll writes a state file" "yes" "$(present "$STATE/poll.json")"
-check "poll records a cursor" "yes" "$(python3 -c 'import json,sys;print("yes" if json.load(open(sys.argv[1])).get("cursor") else "no")' "$STATE/poll.json")"
+check "poll records a cursor" "yes" "$(python3 -c 'import json,sys;print("yes" if json.load(open(sys.argv[1])).get("lastPassAt") else "no")' "$STATE/poll.json")"
 check "poll releases its lock" "no" "$(present "$STATE/poll.lock")"
 check "the first pass asks for every ready ticket" "no" "$(grep -q 'updated >=' "$TMP/poll-calls.log" && echo yes || echo no)"
 wait_gone "$STATE/lock/ADAM-930"

@@ -40,21 +40,40 @@ type ChangelogPage = {
   values?: History[]
 }
 
+// `jira issue search --fields` returns the chosen fields at the top level, with
+// key first. The receiver needs the nested shape, so this maps it back.
+type SearchRow = {
+  key: string
+  summary?: string
+  labels?: string[]
+  updated?: string
+  assignee?: Account
+}
+
 const pageSize = 100
 
-export function readyJql(cfg: Config, since?: string): string {
+export function readyJql(cfg: Config, lookback?: string): string {
   const labels = cfg.triggerLabels.map((label) => `"${label}"`).join(",")
   const clause = labels ? ` AND labels in (${labels})` : ""
-  const changed = since ? ` AND updated >= "${since}"` : ""
+  const changed = lookback ? ` AND updated >= "${lookback}"` : ""
   return `assignee = currentUser()${clause}${changed} AND statusCategory != Done ORDER BY updated DESC`
 }
 
 export async function search(jql: string, limit: number): Promise<Issue[]> {
   const out =
-    await $`atlassian-cli jira issue search --jql ${jql} --limit ${String(limit)} --format json`
+    await $`atlassian-cli jira issue search --jql ${jql} --limit ${String(limit)} --fields summary,labels,updated,assignee --format json`
       .quiet()
       .text()
-  return JSON.parse(out) as Issue[]
+  const rows = JSON.parse(out) as SearchRow[]
+  return rows.map((row) => ({
+    key: row.key,
+    fields: {
+      summary: row.summary,
+      labels: row.labels,
+      updated: row.updated,
+      assignee: row.assignee,
+    },
+  }))
 }
 
 // Jira returns the changelog oldest first. Read the last page first, then walk

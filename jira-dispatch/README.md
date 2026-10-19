@@ -1,18 +1,20 @@
 # jira-dispatch
 
-Turn a Jira webhook into one OpenCode session.
+Turn a Jira trigger into one OpenCode session.
 
-You mark a ticket ready. Jira sends a webhook. This receiver checks the event,
-records it, and drives an OpenCode session on that ticket through the OpenCode
-client. The session runs unattended and reports back as a comment on the ticket.
+You mark a ticket ready. A Jira webhook, or a poll of the ticket changelog,
+reaches this receiver. It checks the event, records it, and drives an OpenCode
+session on that ticket through the OpenCode client. The session runs unattended
+and reports back as a comment on the ticket.
 
 ## Commands
 
 ```
 jira-dispatch serve                     run the webhook receiver (default)
+jira-dispatch poll                      dispatch tickets whose changelog shows a new trigger label
 jira-dispatch catchup                   dispatch tickets that became ready while the receiver was down
 jira-dispatch work-mode [on|off|status] turn unattended runs on or off
-jira-dispatch install                   write the config, the secret file and the launchd agent
+jira-dispatch install                   write the config, the secret file and the launchd agents
 jira-dispatch help
 ```
 
@@ -50,6 +52,22 @@ summary edit, or any other change is ignored. This matters: the session comments
 on its own ticket as you, so without that rule the session would trigger itself
 and loop. A fresh assignment starts a run with no label change needed.
 
+### Without a Jira admin
+
+A Jira Cloud admin webhook needs the global **Administer Jira** permission, and
+the dynamic webhook API (`/rest/api/3/webhook`) is open only to Connect and
+OAuth 2.0 apps. A normal user cannot create either. An API token cannot exceed
+the permissions of the account that owns it.
+
+`poll` covers that case. It reads the changelog of each ready ticket and
+dispatches once per label add. A later comment or summary edit is not a label
+add, so it does not loop. `poll` also uses the same read access as `catchup`, so
+no admin is involved.
+
+Both sources produce the same payload for the same change, including the Jira
+changelog id. The receiver therefore dedupes a poll and a webhook delivery of the
+same event, and the two can run together.
+
 ## One accepted event
 
 ```
@@ -71,11 +89,16 @@ The run record on disk is the durable evidence that a ticket was dispatched. The
 lock is held for the whole session, so a second event on the same ticket is
 refused while the first session runs.
 
+`poll` builds the same body for a label add, with the issue's real changelog id
+as the event id. It posts to the same `/jira/hook` endpoint with the same HMAC
+signature.
+
 ## Requirements
 
 - Bun
 - An OpenCode server. Either the local background service (the default) or a
   server named in `opencode.baseUrl`.
+- `atlassian-cli` on `PATH` for `poll` and `catchup`.
 
 ## Install
 
@@ -83,8 +106,11 @@ refused while the first session runs.
 bun run src/cli.ts install        # or, after a build: dist/jira-dispatch install
 ```
 
-This writes the config, the secret file, and the launchd agent. It does not
-start a Jira webhook and it does not open a public endpoint. Then:
+This writes the config, the secret file, and two launchd agents: the receiver,
+and a poll pass every 120 seconds. It does not create a Jira webhook and it does
+not open a public endpoint. Both agents get a `PATH` that includes
+`/opt/homebrew/bin` and `~/.local/bin`, so `atlassian-cli` and `opencode`
+resolve under launchd. Then:
 
 ```bash
 # 1. the webhook secret
@@ -96,22 +122,34 @@ $EDITOR ~/.config/jira-dispatch/config.json
 # 3. allow runs
 bun run src/cli.ts work-mode on
 
-# 4. expose the port. Pick one.
+# 4. run a poll pass by hand to check the Jira read
+bun run src/cli.ts poll --dry-run
+
+# 5. only for a webhook: expose the port. Pick one.
 opentunnel route add 8787
 #   or, keeping it inside your tailnet tooling:
 # tailscale funnel --bg --https=8443 8787
 
-# 5. in Jira: Settings -> System -> Webhooks -> Create
-#    URL:    the public URL printed in step 4, with /jira/hook
+# 6. only for a webhook, and only a Jira admin can do this:
+#    Settings -> System -> Webhooks -> Create
+#    URL:    the public URL printed in step 5, with /jira/hook
 #    Secret: the same value as in secret.env
 #    Events: Issue -> assigned, updated
 
-# 6. check
+# 7. check
 curl -s http://127.0.0.1:8787/healthz
 
-# 7. pick up anything that became ready while the receiver was down
+# 8. pick up anything that became ready before the poll agent existed
 bun run src/cli.ts catchup
 ```
+
+The poll agent needs no admin and no tunnel. It reads Jira over the same token
+that `catchup` uses. Leave step 5 out when you only poll. If an admin creates the
+webhook later, both sources can run: the receiver dedupes them by changelog id.
+
+The 120-second interval is `pollIntervalSeconds` in `src/install.ts`. Change it
+and re-run `install` to rewrite the agent. For a manual loop, pass
+`--interval <seconds>` to `poll`, or set `JIRA_DISPATCH_POLL_INTERVAL`.
 
 ### The secret
 
@@ -165,6 +203,10 @@ is:
 | `allowedActors` | required | Emails or account ids allowed to trigger a run. Must not be empty. |
 | `allowedEvents` | assigned, updated | Accepted `webhookEvent` values. Empty means any. |
 | `triggerLabels` | `["agent-ready"]` | The issue must carry one of these. Empty means any. |
+
+`poll` requires at least one `triggerLabels` entry. With an empty list it
+refuses to run, because its JQL would then match every open ticket assigned to
+you.
 | `lockTtlHours` | `6` | A lock older than this is stale and is taken over. It covers a receiver that died mid-session, not the length of a run. |
 | `opencode` | none | Optional. `baseUrl` names a server; `agent` and `model` are passed to `session.create`. |
 | `projects` | required | Per project key. `workspace` is required; `promptTemplate`, `prepare` and `prepareDir` are optional. |
@@ -231,8 +273,8 @@ bun run test
 No Jira and no real OpenCode. The check starts the receiver on a free port and a
 fake OpenCode server that records every request, then asserts what the receiver
 asked for: the session title, the workspace, the prompt text, and the wait. It
-also covers the default prompt, the `catchup`, `work-mode` and `install`
-subcommands. 54 checks.
+also covers the default prompt, the `poll`, `catchup`, `work-mode` and `install`
+subcommands. 69 checks.
 
 ## Known gaps
 
@@ -241,6 +283,11 @@ subcommands. 54 checks.
   first. The lock prevents concurrent sessions; it does not merge runs.
 - The catch-up is not automatic. Run `catchup` by hand, or when the receiver
   starts, to pick up tickets that became ready while it was down.
+- `poll` adds latency: a label add is picked up on the next 120-second pass.
+- `poll` reacts to a label add only. A fresh assignment with the label already
+  present does not start a run; the webhook path is the one that reacts to an
+  assignment. Remove and add the label, or run `catchup`, to dispatch it.
+- An admin webhook needs a Jira admin. The poll path is the no-admin source.
 - There is no anti-replay check on a signed body. The webhook secret is the trust
   boundary, so a replay already requires the secret, which allows forging any
   event.

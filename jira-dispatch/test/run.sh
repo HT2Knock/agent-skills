@@ -292,15 +292,23 @@ check "no promptTemplate: the default prompt points at the skills" "yes" "$(grep
 # ---------------------------------------------------------------- catch-up
 
 mkdir -p "$TMP/bin"
-cat >"$TMP/bin/atlassian-cli" <<EOF
+cat >"$TMP/bin/atlassian-cli" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' '[{"id":"10002","key":"ADAM-920","fields":{"summary":"Catch-up ticket","labels":["agent-ready"],"updated":"2026-10-13T09:00:00.000+0700","assignee":{"emailAddress":"$ME"},"issuetype":{"name":"Bug"},"priority":{"name":"High"}}}]'
+for arg in "$@"; do
+    case "$arg" in
+        */changelog*) cat "${FAKE_CHANGELOG:-/dev/null}"; exit 0 ;;
+    esac
+done
+cat "${FAKE_SEARCH:-/dev/null}"
 EOF
 chmod +x "$TMP/bin/atlassian-cli"
+cat >"$TMP/catchup-search.json" <<EOF
+[{"id":"10002","key":"ADAM-920","fields":{"summary":"Catch-up ticket","labels":["agent-ready"],"updated":"2026-10-13T09:00:00.000+0700","assignee":{"emailAddress":"$ME"},"issuetype":{"name":"Bug"},"priority":{"name":"High"}}}]
+EOF
 printf 'TEST_WEBHOOK_SECRET=%s\n' "$SECRET" >"$TMP/secret.env"
 
 before="$(run_count)"
-out="$(PATH="$TMP/bin:$PATH" \
+out="$(PATH="$TMP/bin:$PATH" FAKE_SEARCH="$TMP/catchup-search.json" \
     JIRA_DISPATCH_URL="http://$addr/jira/hook" \
     JIRA_DISPATCH_SECRET_FILE="$TMP/secret.env" \
     bun run "$TOOL_DIR/src/cli.ts" catchup --config "$TMP/config.json" 2>&1)" || true
@@ -308,11 +316,102 @@ check "catch-up reports the ready ticket" "yes" "$(printf '%s' "$out" | grep -q 
 check "catch-up starts the ready ticket" "$((before + 1))" "$(run_count)"
 check "catch-up reports a dispatch" "yes" "$(printf '%s' "$out" | grep -q 'dispatched' && echo yes || echo no)"
 
-out="$(PATH="$TMP/bin:$PATH" \
+out="$(PATH="$TMP/bin:$PATH" FAKE_SEARCH="$TMP/catchup-search.json" \
     JIRA_DISPATCH_URL="http://$addr/jira/hook" \
     JIRA_DISPATCH_SECRET_FILE="$TMP/secret.env" \
     bun run "$TOOL_DIR/src/cli.ts" catchup --config "$TMP/config.json" 2>&1)" || true
 check "catch-up is idempotent" "$((before + 1))" "$(run_count)"
+
+# ---------------------------------------------------------------- poll
+
+issue_json() { # key id -> one search result
+    cat <<JSON
+[{"id":"$2","key":"$1","fields":{"summary":"Poll ticket $1","labels":["agent-ready"],"updated":"2026-10-19T10:00:00.000+0700","assignee":{"emailAddress":"$ME"},"issuetype":{"name":"Bug"},"priority":{"name":"High"}}}]
+JSON
+}
+
+poll() {
+    PATH="$TMP/bin:$PATH" \
+        FAKE_SEARCH="$TMP/poll-search.json" \
+        FAKE_CHANGELOG="$TMP/poll-changelog.json" \
+        JIRA_DISPATCH_URL="http://$addr/jira/hook" \
+        JIRA_DISPATCH_SECRET_FILE="$TMP/secret.env" \
+        bun run "$TOOL_DIR/src/cli.ts" poll --config "$TMP/config.json" "$@" 2>&1
+}
+
+issue_json ADAM-930 10003 >"$TMP/poll-search.json"
+cat >"$TMP/poll-changelog.json" <<EOF
+{"startAt":0,"maxResults":100,"total":2,"values":[
+  {"id":"5001","created":"2026-10-19T10:00:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"labels","fromString":"","toString":"agent-ready"}]},
+  {"id":"5002","created":"2026-10-19T10:05:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"comment","fromString":"","toString":"a comment"}]}
+]}
+EOF
+
+poll_base="$(run_count)"
+out="$(poll)" || true
+check "poll reports the ready ticket" "yes" "$(printf '%s' "$out" | grep -q 'ADAM-930' && echo yes || echo no)"
+check "poll starts the ready ticket" "$((poll_base + 1))" "$(run_count)"
+check "poll reports a dispatch" "yes" "$(printf '%s' "$out" | grep -q 'dispatched' && echo yes || echo no)"
+wait_gone "$STATE/lock/ADAM-930"
+
+out="$(poll)" || true
+check "poll is idempotent" "$((poll_base + 1))" "$(run_count)"
+
+# The session comments on the ticket, which changes updated and adds a
+# changelog entry. Only the label add may trigger a run.
+cat >"$TMP/poll-changelog.json" <<EOF
+{"startAt":0,"maxResults":100,"total":3,"values":[
+  {"id":"5001","created":"2026-10-19T10:00:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"labels","fromString":"","toString":"agent-ready"}]},
+  {"id":"5002","created":"2026-10-19T10:05:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"comment","fromString":"","toString":"a comment"}]},
+  {"id":"5003","created":"2026-10-19T10:10:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"comment","fromString":"","toString":"reported back"}]}
+]}
+EOF
+out="$(poll)" || true
+check "a later comment does not start a run" "$((poll_base + 1))" "$(run_count)"
+check "a later comment is reported as duplicate" "yes" "$(printf '%s' "$out" | grep -q 'duplicate' && echo yes || echo no)"
+
+wait_gone "$STATE/lock/ADAM-930"
+cat >"$TMP/poll-changelog.json" <<EOF
+{"startAt":0,"maxResults":100,"total":4,"values":[
+  {"id":"5001","created":"2026-10-19T10:00:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"labels","fromString":"","toString":"agent-ready"}]},
+  {"id":"5002","created":"2026-10-19T10:05:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"comment","fromString":"","toString":"a comment"}]},
+  {"id":"5003","created":"2026-10-19T10:10:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"comment","fromString":"","toString":"reported back"}]},
+  {"id":"5004","created":"2026-10-19T10:15:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"labels","fromString":"urgent","toString":"agent-ready urgent"}]}
+]}
+EOF
+out="$(poll)" || true
+check "a second label add starts a new run" "$((poll_base + 2))" "$(run_count)"
+check "a second label add is reported as dispatched" "yes" "$(printf '%s' "$out" | grep -q 'dispatched' && echo yes || echo no)"
+
+issue_json ADAM-931 10004 >"$TMP/poll-search.json"
+cat >"$TMP/poll-changelog.json" <<EOF
+{"startAt":0,"maxResults":100,"total":1,"values":[
+  {"id":"5005","created":"2026-10-19T10:20:00.000+0700","author":{"emailAddress":"someone-else@example.com"},"items":[{"field":"labels","fromString":"","toString":"agent-ready"}]}
+]}
+EOF
+out="$(poll)" || true
+check "poll honours the actor filter" "yes" "$(printf '%s' "$out" | grep -q 'ignored' && echo yes || echo no)"
+check "poll actor filter: no run" "$((poll_base + 2))" "$(run_count)"
+
+issue_json ADAM-932 10005 >"$TMP/poll-search.json"
+cat >"$TMP/poll-changelog.json" <<EOF
+{"startAt":0,"maxResults":100,"total":1,"values":[
+  {"id":"5006","created":"2026-10-19T10:25:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"comment","fromString":"","toString":"no label change"}]}
+]}
+EOF
+out="$(poll)" || true
+check "no label-add history: skipped" "yes" "$(printf '%s' "$out" | grep -q 'no label-add history' && echo yes || echo no)"
+check "no label-add history: no run" "$((poll_base + 2))" "$(run_count)"
+
+issue_json ADAM-933 10006 >"$TMP/poll-search.json"
+cat >"$TMP/poll-changelog.json" <<EOF
+{"startAt":0,"maxResults":100,"total":1,"values":[
+  {"id":"5007","created":"2026-10-19T10:30:00.000+0700","author":{"emailAddress":"$ME"},"items":[{"field":"labels","fromString":"","toString":"agent-ready"}]}
+]}
+EOF
+out="$(poll --dry-run)" || true
+check "poll dry run posts nothing" "$((poll_base + 2))" "$(run_count)"
+check "poll dry run names the changelog id" "yes" "$(printf '%s' "$out" | grep -q 'would post 5007' && echo yes || echo no)"
 
 # ---------------------------------------------------------------- work-mode CLI
 
@@ -329,6 +428,7 @@ HOME="$TMP/home" JIRA_DISPATCH_SECRET_FILE="$TMP/home/secret.env" \
 check "install writes a config" "yes" "$(present "$TMP/home/config.json")"
 check "install config has no promptTemplate" "no" "$(grep -q promptTemplate "$TMP/home/config.json" && echo yes || echo no)"
 check "install writes the launchd plist" "yes" "$(present "$TMP/home/Library/LaunchAgents/com.ht2knock.jira-dispatch.plist")"
+check "install writes the poll launchd plist" "yes" "$(present "$TMP/home/Library/LaunchAgents/com.ht2knock.jira-dispatch-poll.plist")"
 
 # ---------------------------------------------------------------- result
 

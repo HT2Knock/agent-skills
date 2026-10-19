@@ -1,6 +1,7 @@
 import { catchupCommand } from "./catchup.ts"
 import { defaultConfigPath, loadConfig } from "./config.ts"
 import { installCommand } from "./install.ts"
+import { pollCommand } from "./poll.ts"
 import { serve } from "./server.ts"
 import { or } from "./values.ts"
 import { workModeCommand } from "./workmode.ts"
@@ -11,17 +12,20 @@ Usage: jira-dispatch [command] [options]
 
 Commands:
   serve                    Run the webhook receiver (default)
+  poll                     Dispatch tickets whose changelog shows a new trigger label
   catchup                  Dispatch tickets that became ready while the receiver was down
   work-mode [on|off|status]
-  install                  Write the config, the secret file and the launchd agent
+  install                  Write the config, the secret file and the launchd agents
   help
 
 Options:
   --config <path>          Config file (default: ~/.config/jira-dispatch/config.json)
-  --jql <jql>              catchup: override the JQL query
-  --limit <n>              catchup: maximum issues (default: 50)
-  --url <url>              catchup: receiver URL (default: http://<listen>/jira/hook)
+  --jql <jql>              poll, catchup: override the JQL query
+  --limit <n>              poll, catchup: maximum issues (default: 50)
+  --url <url>              poll, catchup: receiver URL (default: http://<listen>/jira/hook)
+  --interval <seconds>     poll: repeat every N seconds (default: run once)
   --dry-run                install: write the files, skip launchctl
+                           poll: print what would be posted
 `
 
 type Options = Record<string, string>
@@ -37,6 +41,7 @@ function help(): void {
 
 const commands: Record<string, Command> = {
   serve: (_args, _options, path) => serve(loadConfig(path), log),
+  poll: (args, options, path) => pollCommand(path, options, args),
   catchup: (args, options, path) => catchupCommand(path, options, args),
   "work-mode": (args, _options, path) => workModeCommand(path, args),
   install: (_args, options, path) => installCommand(path, options["dry-run"] === "true"),
@@ -57,7 +62,7 @@ async function main(): Promise<void> {
 function parseArgs(argv: string[]): { options: Options; positional: string[] } {
   const options: Options = {}
   const positional: string[] = []
-  const valueFlags = new Set(["config", "jql", "limit", "url"])
+  const valueFlags = new Set(["config", "jql", "limit", "url", "interval"])
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (!arg.startsWith("--")) {

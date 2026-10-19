@@ -6,7 +6,6 @@ import { secretFilePath } from "./secret.ts"
 
 const label = "com.ht2knock.jira-dispatch"
 const pollLabel = "com.ht2knock.jira-dispatch-poll"
-const pollIntervalSeconds = 120
 
 // launchd gives an agent a minimal PATH. The poll agent calls atlassian-cli,
 // and the receiver may start the opencode service, so the brew and local bins
@@ -39,12 +38,12 @@ export async function installCommand(configPath: string, dryRun: boolean): Promi
       keepAlive: true,
     }),
   )
-  const pollProgram = withCommand(program, "poll")
+  const pollProgram = withCommand(program, "poll", "--watch")
   writeFileSync(
     pollPlist,
     renderPlist(pollLabel, pollProgram, {
       logs: join(homedir(), "Library", "Logs", "jira-dispatch-poll.log"),
-      interval: pollIntervalSeconds,
+      keepAlive: true,
     }),
   )
   console.log(`wrote ${servePlist}`)
@@ -66,7 +65,7 @@ export async function installCommand(configPath: string, dryRun: boolean): Promi
   }
   console.log("agents loaded")
   console.log(
-    `\nnext:\n  1. put the webhook secret in ${secretFilePath()}\n  2. edit ${configPath}\n  3. jira-dispatch work-mode on\n  4. add a trigger label to a ticket; the poll agent checks every ${pollIntervalSeconds}s`,
+    `\nnext:\n  1. put the webhook secret in ${secretFilePath()}\n  2. edit ${configPath}\n  3. jira-dispatch work-mode on\n  4. add a trigger label to a ticket; the poll agent checks from 60s to 15m, faster when work is flowing`,
   )
 }
 
@@ -100,8 +99,8 @@ function selfCommand(): string[] {
   return source ? [exec, "run", Bun.main, "serve"] : [exec, "serve"]
 }
 
-function withCommand(program: string[], command: string): string[] {
-  return [...program.slice(0, -1), command]
+function withCommand(program: string[], command: string, ...args: string[]): string[] {
+  return [...program.slice(0, -1), command, ...args]
 }
 
 // bootout is asynchronous. A bootstrap before the old service is gone fails
@@ -118,15 +117,11 @@ async function reload(domain: string, name: string, path: string): Promise<void>
 
 type PlistOptions = {
   logs: string
-  interval?: number
   keepAlive?: boolean
 }
 
 function renderPlist(name: string, program: string[], options: PlistOptions): string {
   const args = program.map((arg) => `        <string>${escapeXml(arg)}</string>`).join("\n")
-  const interval = options.interval
-    ? `\n    <key>StartInterval</key>\n    <integer>${options.interval}</integer>`
-    : ""
   const keepAlive = options.keepAlive ? "\n    <key>KeepAlive</key>\n    <true/>" : ""
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -139,7 +134,7 @@ function renderPlist(name: string, program: string[], options: PlistOptions): st
 ${args}
     </array>
     <key>RunAtLoad</key>
-    <true/>${interval}${keepAlive}
+    <true/>${keepAlive}
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>

@@ -127,19 +127,20 @@ export type FilterInput = {
 
 export function evaluate(cfg: FilterInput, p: Payload): Decision {
   if (!cfg.workModeOn) return ignore("work mode is off")
+
   if (!fold(cfg.allowedEvents, p.webhookEvent)) {
     return ignore(`event not in allowedEvents: ${p.webhookEvent}`)
   }
+
   if (cfg.allowedActors.length > 0 && !matchesActor(cfg.allowedActors, p.user)) {
     return ignore(`actor is not allowed: ${p.user?.emailAddress ?? p.user?.accountId ?? "unknown"}`)
   }
+
   const labels = p.issue.fields?.labels ?? []
   if (cfg.triggerLabels.length > 0 && !labels.some((label) => fold(cfg.triggerLabels, label))) {
     return ignore("issue has none of the trigger labels")
   }
-  // A session comments on its own ticket. Without this rule that comment is an
-  // update event, the label is still present, and a second session starts on
-  // the work the first one just reported.
+
   if (
     cfg.triggerLabels.length > 0 &&
     p.webhookEvent === "jira:issue_updated" &&
@@ -147,7 +148,9 @@ export function evaluate(cfg: FilterInput, p: Payload): Decision {
   ) {
     return ignore("this change did not add a trigger label")
   }
+
   const project = projectKey(p)
   if (!(project in cfg.projects)) return ignore(`no project mapping for ${project}`)
+
   return { kind: Kind.Dispatch, reason: "accepted" }
 }

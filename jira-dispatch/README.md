@@ -171,7 +171,11 @@ uses those defaults; change `minIntervalSeconds` and `maxIntervalSeconds` in
 `JIRA_DISPATCH_POLL_MIN` and `JIRA_DISPATCH_POLL_MAX` environment variables. The
 watch process holds `poll.lock` for its lifetime; a manual `poll` exits when the
 watch is running. Use `poll --dry-run` to inspect a pass without posting or
-writing state.
+writing state. Send `SIGHUP` to the pid in `poll.lock` to run a pass at once:
+
+```bash
+kill -HUP "$(cat ~/.local/state/jira-dispatch/poll.lock)"
+```
 
 ### The secret
 

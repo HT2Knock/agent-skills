@@ -104,11 +104,25 @@ export async function pollCommand(
         wait = errorInterval(failures)
         console.error(`poll failed: ${message(error)}; next ${wait}s`)
       }
-      await Bun.sleep(wait * 1000)
+      await sleepOrWake(wait)
     }
   } finally {
     release()
   }
+}
+
+// SIGHUP wakes the watch for an immediate pass, so a just-added label does not
+// wait for the idle cap. A signal that arrives during a pass is dropped.
+function sleepOrWake(seconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, seconds * 1000)
+    function done(): void {
+      clearTimeout(timer)
+      process.off("SIGHUP", done)
+      resolve()
+    }
+    process.once("SIGHUP", done)
+  })
 }
 
 async function pass(

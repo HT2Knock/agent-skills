@@ -1,8 +1,6 @@
-// Stands in for the OpenCode server, so the end-to-end check runs offline.
-//
-// It records every request it receives. The check reads that record to prove
-// what the receiver asked for: a session title, a workspace, a prompt, and a
-// wait.
+// Stands in for the OpenCode server so the end-to-end check runs offline. It
+// records every request; the check reads that record to prove what the receiver
+// asked for.
 import { appendFileSync } from "node:fs"
 
 const logPath = process.env.FAKE_LOG
@@ -53,7 +51,10 @@ const server = Bun.serve({
       return Response.json({ data: [] })
     }
 
-    return Response.json({ error: "unexpected", method: req.method, path: url.pathname }, { status: 404 })
+    return Response.json(
+      { error: "unexpected", method: req.method, path: url.pathname },
+      { status: 404 },
+    )
   },
 })
 

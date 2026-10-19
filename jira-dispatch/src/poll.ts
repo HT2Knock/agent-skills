@@ -16,8 +16,8 @@ type CachedIssue = {
 }
 
 type PollState = {
-  // Local time of the last successful search, in Jira's offset form.
-  cursor?: string
+  // Local time of the last successful search, in epoch ms.
+  lastPassAt?: number
   emptyPasses?: number
   issues?: Record<string, CachedIssue>
 }
@@ -35,7 +35,6 @@ const minIntervalSeconds = 60
 const maxIntervalSeconds = 900
 const errorBaseSeconds = 120
 const errorMaxSeconds = 1800
-const overlapMs = 5 * 60_000
 const cacheTtlMs = 30 * 24 * 3_600_000
 
 export async function pollCommand(
@@ -194,7 +193,7 @@ async function pass(
   }
 
   if (!dryRun) {
-    state.cursor = jiraTimestamp(startedAt)
+    state.lastPassAt = startedAt.getTime()
     prune(cache)
   }
   return result
@@ -223,16 +222,15 @@ function toPayload(issue: Issue, history: History, cfg: Config): unknown {
 }
 
 // Only ask Jira for issues that changed since the last successful pass. The
-// five-minute overlap absorbs clock skew; the cache absorbs the overlap.
+// lookback is a relative JQL date, so it follows the Jira server clock and
+// survives a sleep without a timezone conversion. The five-minute overlap
+// absorbs index lag; the cache absorbs the overlap.
 function jqlFor(cfg: Config, state: PollState, override: string): string {
   if (override) return override
-  const cursor = Date.parse(state.cursor ?? "")
-  if (Number.isNaN(cursor)) return readyJql(cfg)
-  return readyJql(cfg, jiraTimestamp(new Date(cursor - overlapMs)))
-}
-
-function jiraTimestamp(date: Date): string {
-  return date.toISOString().replace("Z", "+0000")
+  const last = state.lastPassAt
+  if (!last || !Number.isFinite(last)) return readyJql(cfg)
+  const minutes = Math.ceil((Date.now() - last) / 60_000) + 5
+  return readyJql(cfg, `-${minutes}m`)
 }
 
 // One pass with no dispatch moves one step down the ladder. A dispatch resets

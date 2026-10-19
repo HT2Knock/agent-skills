@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node
 import { join } from "node:path"
 import type { Config, Project } from "./config.ts"
 import { Kind, browseUrl, eventId, projectKey, type Decision, type Payload } from "./hook.ts"
-import { getClient } from "./opencode.ts"
+import { getClient, type Client } from "./opencode.ts"
 
 type RunRecord = {
   key: string
@@ -245,7 +245,7 @@ export class Dispatcher {
       await client.session.prompt({ sessionID, text: record.prompt })
       write("prompt accepted, waiting for the session")
 
-      await client.session.wait({ sessionID })
+      await waitForSession(client, sessionID, write)
       write("session finished")
     } catch (error) {
       write(`run failed: ${message(error)}`)
@@ -253,4 +253,42 @@ export class Dispatcher {
       this.releaseLock(record.key)
     }
   }
+}
+
+const waitPollMs = 30_000
+const waitMaxMs = 6 * 3_600_000
+
+// The wait route has a server-side timeout. A slow model can exceed it while
+// the session keeps running, so a timeout must not release the ticket lock.
+async function waitForSession(
+  client: Client,
+  sessionID: string,
+  write: (text: string) => void,
+): Promise<void> {
+  try {
+    await client.session.wait({ sessionID })
+    return
+  } catch (error) {
+    if (!isWaitTimeout(error)) throw error
+    write("wait timed out; holding the lock until the session ends")
+  }
+
+  const deadline = Date.now() + waitMaxMs
+  while (Date.now() < deadline) {
+    await Bun.sleep(waitPollMs)
+    try {
+      const active = (await client.session.active()) as unknown as Record<string, { type?: string }>
+      if (active[sessionID]?.type !== "running") {
+        write("session ended after the wait timeout")
+        return
+      }
+    } catch (error) {
+      write(`session check failed: ${message(error)}; retrying`)
+    }
+  }
+  write("session is still running after 6h; releasing the lock")
+}
+
+function isWaitTimeout(error: unknown): boolean {
+  return /timed out|timeout/i.test(message(error))
 }

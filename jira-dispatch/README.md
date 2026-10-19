@@ -175,12 +175,11 @@ scanned again.
 
 ### The default prompt
 
-Omit `promptTemplate` and the receiver sends a built-in prompt. It names the
-ticket, the URL and the workspace, points at the `atlassian-cli` and
-`autonomous-run` skills, and ends on one finish condition: one comment on the
-ticket. OpenCode already loads the AGENTS.md files and advertises each skill by
-its description, so the prompt does not repeat either. Set `promptTemplate` when
-a project needs a different prompt.
+Omit `promptTemplate` and the receiver sends a built-in prompt: the ticket, the
+URL and the workspace, the two skills to use, and the branch rule. OpenCode
+already loads the AGENTS.md files and advertises each skill by its description,
+so the prompt does not repeat either. Set `promptTemplate` when a project needs
+a different prompt.
 
 ## Project mapping
 

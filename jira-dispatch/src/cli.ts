@@ -23,9 +23,11 @@ Options:
   --jql <jql>              poll, catchup: override the JQL query
   --limit <n>              poll, catchup: maximum issues (default: 50)
   --url <url>              poll, catchup: receiver URL (default: http://<listen>/jira/hook)
-  --interval <seconds>     poll: repeat every N seconds (default: run once)
+  --watch                  poll: keep running with an adaptive interval
+  --min-interval <s>       poll --watch: fastest interval (default: 60)
+  --max-interval <s>       poll --watch: slowest interval (default: 900)
   --dry-run                install: write the files, skip launchctl
-                           poll: print what would be posted
+                           poll: print what would be posted, write no state
 `
 
 type Options = Record<string, string>
@@ -62,7 +64,7 @@ async function main(): Promise<void> {
 function parseArgs(argv: string[]): { options: Options; positional: string[] } {
   const options: Options = {}
   const positional: string[] = []
-  const valueFlags = new Set(["config", "jql", "limit", "url", "interval"])
+  const valueFlags = new Set(["config", "jql", "limit", "url", "min-interval", "max-interval"])
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (!arg.startsWith("--")) {

@@ -42,10 +42,11 @@ type ChangelogPage = {
 
 const pageSize = 100
 
-export function readyJql(cfg: Config): string {
+export function readyJql(cfg: Config, since?: string): string {
   const labels = cfg.triggerLabels.map((label) => `"${label}"`).join(",")
   const clause = labels ? ` AND labels in (${labels})` : ""
-  return `assignee = currentUser()${clause} AND statusCategory != Done ORDER BY updated DESC`
+  const changed = since ? ` AND updated >= "${since}"` : ""
+  return `assignee = currentUser()${clause}${changed} AND statusCategory != Done ORDER BY updated DESC`
 }
 
 export async function search(jql: string, limit: number): Promise<Issue[]> {

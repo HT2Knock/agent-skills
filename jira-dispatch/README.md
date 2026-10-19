@@ -64,6 +64,22 @@ dispatches once per label add. A later comment or summary edit is not a label
 add, so it does not loop. `poll` also uses the same read access as `catchup`, so
 no admin is involved.
 
+Polling is incremental and adaptive:
+
+- It stores the time of the last successful search and asks Jira only for issues
+  changed since then, with a five-minute overlap for clock skew.
+- It caches each ticket's `updated` value and the changelog id it already
+  dispatched. An unchanged ticket costs no changelog request, and a comment on a
+  handled ticket does not post again.
+- After a dispatch it polls every 60 seconds. Each empty pass backs off one step:
+  120, 300, 600, then 900 seconds. Jitter is ±10%.
+- A failed pass backs off from 120 seconds, doubles, and caps at 30 minutes. The
+  cursor does not move on a failure, so the event is retried.
+- A single-flight lock stops two poll passes from overlapping.
+
+At the 900-second cap an idle machine makes 96 search requests per day, no
+changelog requests, and the watch process sleeps between passes.
+
 Both sources produce the same payload for the same change, including the Jira
 changelog id. The receiver therefore dedupes a poll and a webhook delivery of the
 same event, and the two can run together.
@@ -107,10 +123,10 @@ bun run src/cli.ts install        # or, after a build: dist/jira-dispatch instal
 ```
 
 This writes the config, the secret file, and two launchd agents: the receiver,
-and a poll pass every 120 seconds. It does not create a Jira webhook and it does
-not open a public endpoint. Both agents get a `PATH` that includes
-`/opt/homebrew/bin` and `~/.local/bin`, so `atlassian-cli` and `opencode`
-resolve under launchd. Then:
+and a watch poller that backs off from 60 seconds to 15 minutes. It does not
+create a Jira webhook and it does not open a public endpoint. Both agents get a
+`PATH` that includes `/opt/homebrew/bin` and `~/.local/bin`, so `atlassian-cli`
+and `opencode` resolve under launchd. Then:
 
 ```bash
 # 1. the webhook secret
@@ -147,9 +163,13 @@ The poll agent needs no admin and no tunnel. It reads Jira over the same token
 that `catchup` uses. Leave step 5 out when you only poll. If an admin creates the
 webhook later, both sources can run: the receiver dedupes them by changelog id.
 
-The 120-second interval is `pollIntervalSeconds` in `src/install.ts`. Change it
-and re-run `install` to rewrite the agent. For a manual loop, pass
-`--interval <seconds>` to `poll`, or set `JIRA_DISPATCH_POLL_INTERVAL`.
+The watch interval is adaptive: 60 seconds after a dispatch, then 120, 300, 600
+and 900 seconds after each empty pass, with ±10% jitter. Pass
+`--min-interval <s>` or `--max-interval <s>`, or set
+`JIRA_DISPATCH_POLL_MIN` and `JIRA_DISPATCH_POLL_MAX`, to change the band. The
+watch process holds `poll.lock` for its lifetime; a manual `poll` exits when the
+watch is running. Use `poll --dry-run` to inspect a pass without posting or
+writing state.
 
 ### The secret
 
@@ -243,6 +263,8 @@ without a shell, and a failure stops the run.
 ~/.local/state/jira-dispatch/
   seen/<sha256 of event id>.json    dedupe marker
   lock/<KEY>                        per-ticket single-flight
+  poll.json                         poll cursor and per-issue cache
+  poll.lock                         single-flight lock held by the poll agent
   runs/<ts>.<KEY>.json              the run record
   spool/<KEY>.<ts>.json             the raw webhook body
   spool/<KEY>.<ts>.prompt.txt       the rendered prompt
@@ -274,7 +296,7 @@ No Jira and no real OpenCode. The check starts the receiver on a free port and a
 fake OpenCode server that records every request, then asserts what the receiver
 asked for: the session title, the workspace, the prompt text, and the wait. It
 also covers the default prompt, the `poll`, `catchup`, `work-mode` and `install`
-subcommands. 69 checks.
+subcommands. 80 checks.
 
 ## Known gaps
 
@@ -283,7 +305,10 @@ subcommands. 69 checks.
   first. The lock prevents concurrent sessions; it does not merge runs.
 - The catch-up is not automatic. Run `catchup` by hand, or when the receiver
   starts, to pick up tickets that became ready while it was down.
-- `poll` adds latency: a label add is picked up on the next 120-second pass.
+- `poll` adds latency: 60 seconds when work is flowing, up to 15 minutes when
+  the receiver has been idle.
+- The first watch pass has no cursor, so it scans every ready ticket. Run
+  `poll --dry-run` first if a backlog of labeled tickets is not wanted.
 - `poll` reacts to a label add only. A fresh assignment with the label already
   present does not start a run; the webhook path is the one that reacts to an
   assignment. Remove and add the label, or run `catchup`, to dispatch it.

@@ -6,6 +6,22 @@ You mark a ticket ready. Jira sends a webhook. This receiver checks the event,
 records it, and drives an OpenCode session on that ticket through the OpenCode
 client. The session runs unattended and reports back as a comment on the ticket.
 
+## Commands
+
+```
+jira-dispatch serve                     run the webhook receiver (default)
+jira-dispatch catchup                   dispatch tickets that became ready while the receiver was down
+jira-dispatch work-mode [on|off|status] turn unattended runs on or off
+jira-dispatch install                   write the config, the secret file and the launchd agent
+jira-dispatch help
+```
+
+`--config <path>` selects the config file. The default is
+`~/.config/jira-dispatch/config.json`, or `JIRA_DISPATCH_CONFIG` when set.
+
+Run from a source checkout with `bun run src/cli.ts <command>`, or build the
+single binary and run `dist/jira-dispatch <command>`.
+
 ## Why the client and not a shell command
 
 An earlier version ran `opencode run` as a child process and matched sessions by
@@ -64,10 +80,11 @@ refused while the first session runs.
 ## Install
 
 ```bash
-./scripts/install.sh          # bun install, write config, load the launchd agent
+bun run src/cli.ts install        # or, after a build: dist/jira-dispatch install
 ```
 
-Then:
+This writes the config, the secret file, and the launchd agent. It does not
+start a Jira webhook and it does not open a public endpoint. Then:
 
 ```bash
 # 1. the webhook secret
@@ -77,7 +94,7 @@ $EDITOR ~/.config/jira-dispatch/secret.env
 $EDITOR ~/.config/jira-dispatch/config.json
 
 # 3. allow runs
-./scripts/work-mode.sh on
+bun run src/cli.ts work-mode on
 
 # 4. expose the port. Pick one.
 opentunnel route add 8787
@@ -93,8 +110,15 @@ opentunnel route add 8787
 curl -s http://127.0.0.1:8787/healthz
 
 # 7. pick up anything that became ready while the receiver was down
-./scripts/catchup.sh
+bun run src/cli.ts catchup
 ```
+
+### The secret
+
+`serve` reads the secret from the named environment variable first. If it is
+not set, it reads `~/.config/jira-dispatch/secret.env`, so the secret stays out
+of the launchd plist. Point `JIRA_DISPATCH_SECRET_FILE` at another file to move
+it.
 
 ### Exposing the port
 
@@ -119,23 +143,44 @@ already serve the OpenCode UI. Pass `--https=8443`.
 
 ## Config
 
-| Key | Meaning |
-| --- | --- |
-| `listen` | Address to bind. Keep it on `127.0.0.1`; the tunnel does the exposure. |
-| `secretEnv` | Name of the environment variable that holds the webhook secret. |
-| `stateDir` | Run records, prompts, spooled payloads, logs, seen set, locks. |
-| `workModePath` | Marker file. When absent, the receiver accepts events and starts nothing. |
-| `jiraBaseUrl` | Used to build the ticket link inside the prompt. |
-| `allowedActors` | Emails or account ids allowed to trigger a run. Must not be empty. |
-| `allowedEvents` | Accepted `webhookEvent` values. Empty means any. |
-| `triggerLabels` | The issue must carry one of these. Empty means any. |
-| `lockTtlHours` | A lock older than this is stale and is taken over. It covers a receiver that died mid-session, not the length of a run. |
-| `opencode` | Optional. `baseUrl` names a server; `agent` and `model` are passed to `session.create`. |
-| `projects` | Per project key: `workspace` and `promptTemplate` are required; `prepare` and `prepareDir` are optional. |
+Only two keys have no default: `allowedActors` and `projects`. A minimal config
+is:
+
+```json
+{
+  "allowedActors": ["you@example.com"],
+  "projects": {
+    "ADAM": { "workspace": "~/Documents/adam" }
+  }
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `listen` | `127.0.0.1:8787` | Address to bind. Keep it on `127.0.0.1`; the tunnel does the exposure. |
+| `secretEnv` | `JIRA_WEBHOOK_SECRET` | Name of the environment variable that holds the webhook secret. |
+| `stateDir` | `~/.local/state/jira-dispatch` | Run records, prompts, spooled payloads, logs, seen set, locks. |
+| `workModePath` | `~/.local/state/agent-work-mode` | Marker file. When absent, the receiver accepts events and starts nothing. |
+| `jiraBaseUrl` | none | Used to build the ticket link inside the prompt. |
+| `allowedActors` | required | Emails or account ids allowed to trigger a run. Must not be empty. |
+| `allowedEvents` | assigned, updated | Accepted `webhookEvent` values. Empty means any. |
+| `triggerLabels` | `["agent-ready"]` | The issue must carry one of these. Empty means any. |
+| `lockTtlHours` | `6` | A lock older than this is stale and is taken over. It covers a receiver that died mid-session, not the length of a run. |
+| `opencode` | none | Optional. `baseUrl` names a server; `agent` and `model` are passed to `session.create`. |
+| `projects` | required | Per project key. `workspace` is required; `promptTemplate`, `prepare` and `prepareDir` are optional. |
 
 Placeholders: `{key}`, `{project}`, `{summary}`, `{url}`, `{workspace}`.
 Substitution is a single pass, so a value that contains a placeholder is not
 scanned again.
+
+### The default prompt
+
+Omit `promptTemplate` and the receiver sends a built-in prompt. It names the
+ticket, the URL and the workspace, then tells the session to read the repository
+AGENTS.md files, use the `atlassian-cli` skill for the ticket, decide whether it
+needs a worktree, and follow the `autonomous-run` skill. It ends on one finish
+condition: one comment on the ticket. Set `promptTemplate` when a project needs
+a different prompt.
 
 ## Project mapping
 
@@ -145,8 +190,8 @@ which is the default in `config.example.json`.
 
 The trade: an empty `prepare` gives the decision to the session, and the
 receiver no longer guarantees isolation. If the agent works in the shared
-checkout, two tickets can collide. The prompt template asks it to say which it
-chose, so the run record and the ticket comment show the answer.
+checkout, two tickets can collide. The prompt asks it to say which it chose, so
+the run record and the ticket comment show the answer.
 
 Use `prepare` when a ticket class always needs the same setup. It runs argv-style
 without a shell, and a failure stops the run.
@@ -163,24 +208,40 @@ without a shell, and a failure stops the run.
   logs/<KEY>.<ts>.log               prepare output and session progress
 ```
 
+## Single binary
+
+```bash
+bun run build        # bun build --compile -> dist/jira-dispatch
+```
+
+The binary carries the Bun runtime and the client, so the host needs no
+`node_modules` and no Bun. It is per platform: build `darwin-arm64` on the Mac and
+`linux-x64` on a Linux host. It still needs the `opencode` CLI on `PATH` unless
+`opencode.baseUrl` names a server.
+
+`install` detects how it runs. From the binary it writes a launchd agent that
+runs `dist/jira-dispatch serve`; from a source checkout it writes one that runs
+`bun run src/cli.ts serve`.
+
 ## Test
 
 ```bash
-./test/run.sh
+bun run test
 ```
 
 No Jira and no real OpenCode. The check starts the receiver on a free port and a
 fake OpenCode server that records every request, then asserts what the receiver
-asked for: the session title, the workspace, the prompt text, and the wait. 46
-checks.
+asked for: the session title, the workspace, the prompt text, and the wait. It
+also covers the default prompt, the `catchup`, `work-mode` and `install`
+subcommands. 54 checks.
 
 ## Known gaps
 
 - Each hand-off creates a new session. A second hand-off on the same ticket after
   the first session ended starts a second session, rather than continuing the
   first. The lock prevents concurrent sessions; it does not merge runs.
-- The catch-up is not automatic. Run `scripts/catchup.sh` by hand, or when the
-  receiver starts, to pick up tickets that became ready while it was down.
+- The catch-up is not automatic. Run `catchup` by hand, or when the receiver
+  starts, to pick up tickets that became ready while it was down.
 - There is no anti-replay check on a signed body. The webhook secret is the trust
   boundary, so a replay already requires the secret, which allows forging any
   event.

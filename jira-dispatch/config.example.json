@@ -1,17 +1,8 @@
 {
-  "listen": "127.0.0.1:8787",
-  "secretEnv": "JIRA_WEBHOOK_SECRET",
-  "stateDir": "~/.local/state/jira-dispatch",
-  "workModePath": "~/.local/state/agent-work-mode",
-  "jiraBaseUrl": "https://airrlabs.atlassian.net",
   "allowedActors": ["ngoc.hts@airrlabs.com"],
-  "allowedEvents": ["jira:issue_assigned", "jira:issue_updated"],
-  "triggerLabels": ["agent-ready"],
-  "lockTtlHours": 6,
   "projects": {
     "ADAM": {
-      "workspace": "~/Documents/adam",
-      "promptTemplate": "You are picking up Jira ticket {key}: {summary}\n{url}\n\nYou are running unattended. The user is away. Your working directory is {workspace}.\n\nDo this:\n1. Read the repository's own AGENTS.md files before you change anything, and follow them.\n2. Read the ticket and its comments: atlassian-cli jira issue get {key} --format json, and atlassian-cli jira issue comments {key} --format json.\n3. Decide whether this ticket needs an isolated worktree. If it does, create one with git worktree add before you edit anything, and work inside it. If it does not, work in place. Say which you chose, and why.\n4. Follow the autonomous-run skill: settle one finish condition first, keep a decision log, and stop at the caps.\n5. Choose the mode from the ticket, not from a guess about size.\n   - If the ticket names a verifiable change and the finish condition is a test or a predicate: implement it, push a branch, open a draft PR, and comment the PR link on {key}.\n   - If the ticket needs a product, design, or preference decision that no test can settle: do the research, write the options and a recommendation as a comment on {key}, then stop. Do not open a PR. Do not guess.\n6. Never merge. Never push to main. Never force-push.\n7. Finish with one comment on {key}: what you did, what you decided, and what is blocked.\n"
+      "workspace": "~/Documents/adam"
     }
   }
 }

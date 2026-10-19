@@ -3,16 +3,21 @@
 Turn a Jira webhook into one OpenCode session.
 
 You mark a ticket ready. Jira sends a webhook. This receiver checks the event,
-records it, and starts an OpenCode session on that ticket. The session runs
-unattended and reports back as a comment on the ticket.
+records it, and drives an OpenCode session on that ticket through the OpenCode
+client. The session runs unattended and reports back as a comment on the ticket.
 
-## Why a webhook and not a poll
+## Why the client and not a shell command
 
-A poll asks Atlassian for work on a timer. A webhook asks nothing and speaks
-only when something happens. The trade is an always-on endpoint: a webhook
-delivered while the receiver is down is lost. This receiver runs on the work
-Mac, so "the Mac is off" and "I am not at work" are the same thing, which is
-the behaviour you want.
+An earlier version ran `opencode run` as a child process and matched sessions by
+title. This version uses `@opencode/client`, the generated TypeScript client for
+the OpenCode HTTP API. That gives:
+
+- a typed session handle, instead of parsing a title out of `session list`
+- `session.wait`, so the ticket lock is held until the session actually ends
+- structured errors, instead of scraping a log for `[error]`
+
+The receiver still answers Jira before the session runs, because Jira times out
+a slow endpoint.
 
 ## The trigger
 
@@ -24,16 +29,12 @@ This receiver is opt-in twice:
 1. The issue must carry one of `triggerLabels`, for example `agent-ready`.
 2. The actor must be in `allowedActors`.
 
-Both defaults are in `config.example.json`. Add the label in Jira when you want
-the agent to pick the ticket up. Remove it when you do not.
-
 An update starts a run only when the change **added** the label. A comment, a
-summary edit, or any other change is ignored. This matters: the session
-comments on its own ticket as you, so without that rule the session would
-trigger itself and loop. A fresh assignment starts a run with no label change
-needed, which is the common case.
+summary edit, or any other change is ignored. This matters: the session comments
+on its own ticket as you, so without that rule the session would trigger itself
+and loop. A fresh assignment starts a run with no label change needed.
 
-## What happens to one accepted event
+## One accepted event
 
 ```
 POST /jira/hook
@@ -45,19 +46,25 @@ POST /jira/hook
   answer Jira 202
   ... then, in the background:
   run `prepare` when set
-  start `launch` detached     (opencode run, one session titled <KEY>)
-  wait for the session, then drop the lock
+  client.session.create({ title: <KEY>, location: workspace })
+  client.session.prompt({ sessionID, text })
+  client.session.wait({ sessionID }) then drop the lock
 ```
 
-The response is sent before the session runs, because Jira times out a slow
-endpoint. The run record on disk is the durable evidence that a ticket was
-dispatched. The lock is held for the whole session, so a second event on the
-same ticket is refused while the first session runs.
+The run record on disk is the durable evidence that a ticket was dispatched. The
+lock is held for the whole session, so a second event on the same ticket is
+refused while the first session runs.
+
+## Requirements
+
+- Bun
+- An OpenCode server. Either the local background service (the default) or a
+  server named in `opencode.baseUrl`.
 
 ## Install
 
 ```bash
-./scripts/install.sh          # build, write config, load the launchd agent
+./scripts/install.sh          # bun install, write config, load the launchd agent
 ```
 
 Then:
@@ -72,13 +79,15 @@ $EDITOR ~/.config/jira-dispatch/config.json
 # 3. allow runs
 ./scripts/work-mode.sh on
 
-# 4. expose the port to Jira. This is public HTTPS, so opt in deliberately.
-tailscale funnel --bg 8787
+# 4. expose the port. Pick one.
+opentunnel route add 8787
+#   or, keeping it inside your tailnet tooling:
+# tailscale funnel --bg --https=8443 8787
 
 # 5. in Jira: Settings -> System -> Webhooks -> Create
-#    URL:    https://<your-machine>.<tailnet>.ts.net/jira/hook
+#    URL:    the public URL printed in step 4, with /jira/hook
 #    Secret: the same value as in secret.env
-#    Events: Issue -> created, updated (assigned/deleted not required)
+#    Events: Issue -> assigned, updated
 
 # 6. check
 curl -s http://127.0.0.1:8787/healthz
@@ -87,11 +96,32 @@ curl -s http://127.0.0.1:8787/healthz
 ./scripts/catchup.sh
 ```
 
+### Exposing the port
+
+**opentunnel** gives a random 16-character hostname and terminates TLS on this
+machine, so the relay never holds the key. Read its trust boundary before you
+rely on it:
+
+- the URL is public, and the hostname is published to certificate transparency
+  logs, so it is discoverable
+- route names are private, not secret, and are guessable
+- a tunneled request reaches the app as `127.0.0.1`, so the app must not treat
+  tunneled traffic as local
+
+The HMAC secret is the only gate on this endpoint. That is the point: keep the
+secret strong, and remember `work-mode off` stops all runs without touching the
+network.
+
+**tailscale funnel** is the alternative if you would rather not add a service.
+It needs Funnel enabled for the tailnet in the access-control policy. Do not run
+bare `tailscale funnel 8787`: that targets the default 443 listener, which may
+already serve the OpenCode UI. Pass `--https=8443`.
+
 ## Config
 
 | Key | Meaning |
 | --- | --- |
-| `listen` | Address to bind. Keep it on `127.0.0.1`; Tailscale does the exposure. |
+| `listen` | Address to bind. Keep it on `127.0.0.1`; the tunnel does the exposure. |
 | `secretEnv` | Name of the environment variable that holds the webhook secret. |
 | `stateDir` | Run records, prompts, spooled payloads, logs, seen set, locks. |
 | `workModePath` | Marker file. When absent, the receiver accepts events and starts nothing. |
@@ -100,12 +130,12 @@ curl -s http://127.0.0.1:8787/healthz
 | `allowedEvents` | Accepted `webhookEvent` values. Empty means any. |
 | `triggerLabels` | The issue must carry one of these. Empty means any. |
 | `lockTtlHours` | A lock older than this is stale and is taken over. It covers a receiver that died mid-session, not the length of a run. |
-| `projects` | Per project key: `workspace`, `launch` and `promptTemplate` are required; `prepare` and `prepareDir` are optional. |
+| `opencode` | Optional. `baseUrl` names a server; `agent` and `model` are passed to `session.create`. |
+| `projects` | Per project key: `workspace` and `promptTemplate` are required; `prepare` and `prepareDir` are optional. |
 
 Placeholders: `{key}`, `{project}`, `{summary}`, `{url}`, `{workspace}`.
-`launch` may also use `{prompt}`, which is the rendered template as a single
-argument. Commands run argv-style, without a shell, so a value cannot change
-the shape of the command.
+Substitution is a single pass, so a value that contains a placeholder is not
+scanned again.
 
 ## Project mapping
 
@@ -118,13 +148,8 @@ receiver no longer guarantees isolation. If the agent works in the shared
 checkout, two tickets can collide. The prompt template asks it to say which it
 chose, so the run record and the ticket comment show the answer.
 
-Use `prepare` when a ticket class always needs the same setup, for example a
-worktree, a dependency install, or a generated file. The receiver runs it once
-before the session and stops the run when it fails.
-
-```json
-"prepare": ["git", "-C", "~/Documents/adam/airrlabs-mono", "worktree", "add", "{workspace}", "-b", "feat/{key}"]
-```
+Use `prepare` when a ticket class always needs the same setup. It runs argv-style
+without a shell, and a failure stops the run.
 
 ## Files the receiver writes
 
@@ -132,34 +157,32 @@ before the session and stops the run when it fails.
 ~/.local/state/jira-dispatch/
   seen/<sha256 of event id>.json    dedupe marker
   lock/<KEY>                        per-ticket single-flight
-  runs/<ts>.<KEY>.json              the run record, with the exact argv
+  runs/<ts>.<KEY>.json              the run record
   spool/<KEY>.<ts>.json             the raw webhook body
   spool/<KEY>.<ts>.prompt.txt       the rendered prompt
-  logs/<KEY>.<ts>.log               prepare output and the session log
+  logs/<KEY>.<ts>.log               prepare output and session progress
 ```
 
 ## Test
 
 ```bash
-go test ./...        # pure functions: signature, filters, substitution
-./test/run.sh        # end to end: real HTTP server, signed payloads, fake launch
+./test/run.sh
 ```
 
-`test/run.sh` needs no Jira and no OpenCode. It starts the receiver on a free
-port, sends signed and unsigned payloads, and asserts what was started.
+No Jira and no real OpenCode. The check starts the receiver on a free port and a
+fake OpenCode server that records every request, then asserts what the receiver
+asked for: the session title, the workspace, the prompt text, and the wait. 46
+checks.
 
 ## Known gaps
 
-- The session is created with `--title <KEY>`. The ticket lock and the label
-  rule stop a second session while one runs, but a new hand-off after the first
-  session ends creates a second session rather than continuing the first.
-  Resolving the title to an existing session id is not implemented.
+- Each hand-off creates a new session. A second hand-off on the same ticket after
+  the first session ended starts a second session, rather than continuing the
+  first. The lock prevents concurrent sessions; it does not merge runs.
 - The catch-up is not automatic. Run `scripts/catchup.sh` by hand, or when the
   receiver starts, to pick up tickets that became ready while it was down.
-- `launch` output is not collected back. The session reports by commenting on
-  the ticket.
-- `prepare` runs before the session, so a slow one delays the session start. It
-  does not delay the webhook response, and the lock is held for the whole run.
-- There is no anti-replay check on a signed body. The webhook secret is the
-  trust boundary, so a replay already requires the secret, which allows
-  forging any event.
+- There is no anti-replay check on a signed body. The webhook secret is the trust
+  boundary, so a replay already requires the secret, which allows forging any
+  event.
+- `client.session.wait` maps to an experimental API route. If OpenCode changes
+  it, the lock hold is the part that breaks.

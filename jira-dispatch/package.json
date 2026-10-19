@@ -1,0 +1,16 @@
+{
+  "name": "jira-dispatch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "test": "./test/run.sh"
+  },
+  "dependencies": {
+    "@opencode/client": "^2.0.32"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3"
+  }
+}

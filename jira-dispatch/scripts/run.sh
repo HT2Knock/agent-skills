@@ -7,13 +7,28 @@
 # Usage: run.sh [<config path>]
 set -euo pipefail
 
-readonly HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly BIN="${JIRA_DISPATCH_BIN:-$HERE/../bin/jira-dispatch}"
+# launchd starts a job with a bare PATH. Add the usual places bun can live.
+for dir in "$HOME/.bun/bin" /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
+    if [ -d "$dir" ]; then
+        case ":$PATH:" in
+            *":$dir:"*) ;;
+            *) PATH="$dir:$PATH" ;;
+        esac
+    fi
+done
+export PATH
+
+readonly TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly CONFIG="${1:-${JIRA_DISPATCH_CONFIG:-$HOME/.config/jira-dispatch/config.json}}"
 readonly SECRET_ENV_FILE="${JIRA_DISPATCH_SECRET_FILE:-$HOME/.config/jira-dispatch/secret.env}"
 
-if [ ! -x "$BIN" ]; then
-    printf 'error: %s is missing or not executable; run scripts/install.sh first\n' "$BIN" >&2
+if ! command -v bun >/dev/null 2>&1; then
+    printf 'error: bun is not on PATH\n' >&2
+    exit 1
+fi
+
+if [ ! -d "$TOOL_DIR/node_modules" ]; then
+    printf 'error: %s/node_modules is missing; run scripts/install.sh first\n' "$TOOL_DIR" >&2
     exit 1
 fi
 
@@ -27,5 +42,7 @@ if [ -z "${JIRA_WEBHOOK_SECRET:-}" ]; then
     exit 1
 fi
 export JIRA_WEBHOOK_SECRET
+export JIRA_DISPATCH_CONFIG="$CONFIG"
 
-exec "$BIN" -config "$CONFIG"
+cd "$TOOL_DIR"
+exec bun run "$TOOL_DIR/src/server.ts"

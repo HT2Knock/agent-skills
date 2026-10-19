@@ -5,12 +5,17 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/server.ts",
-    "test": "./test/run.sh"
+    "test": "./test/run.sh",
+    "lint": "oxlint src test",
+    "format": "oxfmt src test package.json .oxfmtrc.json .fallowrc.json",
+    "format:check": "oxfmt --check src test package.json .oxfmtrc.json .fallowrc.json"
   },
   "dependencies": {
     "@opencode/client": "^2.0.32"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.3"
+    "@types/bun": "^1.4.3",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.88.0"
   }
 }

@@ -18,15 +18,20 @@ license text is at the source repository.
 Copyright (c) 2026 Lauren Tan. Source: <https://github.com/cursor/plugins> (pstack).
 
 `skills/autonomous-run` adapts the `autonomous-run` playbook of `poteto-mode`,
-through the `pstack-claude` port by Michael Denyer. Several other skills adapt
-pstack principles and structure.
+through the `pstack-claude` port by Michael Denyer, and now carries the design
+phases of pstack's `figure-it-out`. `skills/catch-up` is adapted from pstack's
+`ketchup`. Several other skills adapt pstack principles and structure.
 
 ## Matt Pocock skills — MIT
 
 Copyright (c) 2026 Matt Pocock. Source: <https://github.com/mattpocock/skills>.
 
-Installed here: `handoff`, `grilling`, `codebase-design`, `teach`,
-`to-questionnaire`, `diagnosing-bugs`.
+Installed here: `handoff`, `grilling` (with the questionnaire section of
+`to-questionnaire`), `codebase-design`, `diagnosing-bugs`, `code-review`, `pr`,
+`writing-for-agents`.
+
+`skills/pr` also adapts the `show-me` pull request template by Dex Horthy
+(Humanlayer, MIT), through `mattpocock/skills`.
 
 ## MIT License
 

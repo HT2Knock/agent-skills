@@ -1,22 +1,31 @@
 # Skill mechanics
 
-The skill-specific branch of [`writing-for-agents`](SKILL.md): what changes when the document is a skill (frontmatter, the invocation choice, and router skills). Everything else about writing it is the universal reference in `SKILL.md`.
+The skill-specific branch of [`writing-for-agents`](SKILL.md): what changes when the document is a skill (frontmatter, invocation, and router skills). Everything else about writing it is the universal reference in `SKILL.md`.
+
+## Frontmatter
+
+OpenCode reads `name` and `description`, and accepts `license`, `compatibility`, and `metadata`. It ignores every other field. A skill copied from another harness usually carries `disable-model-invocation`, `allowed-tools`, `argument-hint`, or an `agents/openai.yaml` file. Remove them; they do nothing here and they hide the real mechanism.
+
+Put the upstream source and version in `metadata`, so a later check can show how far the copy has drifted from its source.
 
 ## Invocation
 
-Two choices, trading the two loads:
+OpenCode lists the `description` of every skill in the `skill` tool, and the agent can load any of them. The description is the skill's top-level context pointer, forced to stay loaded at all times. You pay that context in every session in exchange for the agent finding the skill on its own.
 
-- A **model-invoked** skill keeps a `description`, so the agent can fire it autonomously, and other skills can reach it. You can still type its name: model-invocation always _includes_ user reach; a description only ever adds agent discovery, never removes the human's. The description is the skill's top-level context pointer, forced to stay loaded at all times: permanent context load in exchange for discoverability. A model-invoked skill whose content is all reference is also one home for shared reference: another skill can invoke it, so reference needed by several skills lives in one place. Mechanics: omit `disable-model-invocation`, and write a model-facing description carrying the trigger branches (the pointer-writing rules in `SKILL.md` apply in full).
-- A **user-invoked** skill strips the description from the agent's reach: only the human typing its name can invoke it, and no other skill can. Zero context load, but it spends cognitive load: you are the index that must remember it exists. Mechanics: set `disable-model-invocation: true`; the `description` becomes human-facing: a one-line summary, trigger lists stripped.
+To keep a skill out of automatic reach, use a permission rule in `opencode.json`:
 
-Pick model-invocation only when the agent must reach the skill on its own, or another skill must. If it only ever fires by hand, make it user-invoked and pay no context load.
+```jsonc
+{ "action": "skill", "resource": "<name>", "effect": "ask" }
+```
 
-Shared reference that two user-invoked skills both need can live in neither: with no descriptions, neither can fire the other. Push it to a plain file outside the skill system: external reference any skill can point at.
+`ask` prompts the human before the load. `deny` refuses it. Both keep the description, so the context cost stays. The only zero-context option is to remove the skill from the skills directory.
 
 ## Splitting by invocation
 
-The invocation cut of splitting (the sequence cut lives in `SKILL.md`): split off a model-invoked skill when you have a distinct leading word that should trigger it on its own (a trigger word you actually use in your prompts), or another skill must reach it. You pay context load for the new always-loaded description, so that independent reach has to be worth it.
+Split off a skill when you have a distinct word that should trigger it on its own (a word you actually use in your prompts), or when another skill must reach it. You pay context for the new description, so that independent reach has to be worth it.
+
+Shared reference that two gated skills both need should live in a plain file outside the skill system. A gated skill cannot be reached by another skill, but a plain file can be read by anything.
 
 ## Router skills
 
-When user-invoked skills multiply past what you can remember, that piled-up cognitive load is cured by a **router skill**: one user-invoked skill that names the others and when to reach for each, so the human has one skill to remember instead of many. It can only hint, never fire them: user-invoked skills have no description, so nothing but the human can reach them.
+When the skill list grows past what you can remember, a router skill names the others and when to reach for each. The human remembers one skill instead of many. A router only points; it still loads the skill it names.

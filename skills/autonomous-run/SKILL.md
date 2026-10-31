@@ -16,6 +16,18 @@ Settle four things, in writing, in the task repository. Do not start without the
 3. **Decision log.** A TSV at the run root, one row per iteration: time, phase, decision, reason, evidence, result. See the `show-me-your-work` skill.
 4. **Stop conditions.** The iteration cap and the wall-clock cap. At a cap, stop and write what blocked the run.
 
+## Design the run
+
+Write the unit sequence before the first iteration. Each unit is atomic and lands on its own. Put the riskiest unknown first.
+
+Build the verification harness before the work it checks. Capture the baseline from the pre-change state, so each result reads as the old value against the new one.
+
+Count the work first: rough size, effort, and the blockers you found while looking. Set the rigor to the risk. A one-way door gets more gates; a reversible step gets fewer. Rigor means gates and artifacts, not more effort.
+
+For a one-way-door design decision, use the `codebase-design` skill and its `DESIGN-IT-TWICE.md` to design the interface several ways with parallel subagents, then compare on depth and seam placement. Skip it when the shape is already concrete.
+
+Fan out only across independent units, and give each worker its own worktree or branch so no two share mutable state.
+
 ## Each iteration
 
 1. Check the finish condition.
@@ -32,7 +44,7 @@ Stop when the finish condition passes. Also stop, and write up the reason, when 
 
 ## Report
 
-Send one message: the finish condition, the iterations run, what landed, what was discarded, and the final state of the check. On Signal, keep it short. The detail lives in the decision log and the branch.
+Check the whole against the finish condition on the real product, not only the harness. Send one message: the finish condition, the iterations run, what landed, what was discarded, and the final state of the check. On Signal, keep it short. The detail lives in the decision log and the branch.
 
 ## Wake mechanism
 

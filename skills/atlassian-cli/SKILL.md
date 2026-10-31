@@ -1,7 +1,6 @@
 ---
 name: atlassian-cli
 description: Use the atlassian-cli tool to read, search, create, and update Confluence pages and Jira issues. Triggers on requests to sync a Confluence page to a local file, pull down a PRD, look up or open a Jira ticket, create or file a Jira issue, transition issue status, search with JQL or CQL, post a page update, or any task that names a Confluence page ID or Jira issue key. Prefer this skill over ad-hoc curl/Atlassian REST calls.
-allowed-tools: Bash(atlassian-cli:*)
 ---
 
 # atlassian-cli

@@ -9,7 +9,7 @@ carry no credit lines.
 
 Source: <https://github.com/herdrdev/herdr>
 
-`skills/herdr/SKILL.md` is modified from the upstream skill: the body is
+`archive/herdr/SKILL.md` is modified from the upstream skill: the body is
 condensed, and command syntax now points at the installed CLI. The Apache-2.0
 license text is at the source repository.
 

@@ -38,7 +38,7 @@ EOF
 log() {
     local level="$1"
     shift
-    printf '[%s] %s\n' "$level" "$*"
+    printf '[%s] %s\n' "$level" "$*" >&2
 }
 
 is_secret_path() {
@@ -142,18 +142,21 @@ snapshot() {
 
     if git -C "$repo" rev-parse --verify -q "refs/wip/$topic" >/dev/null; then
         if [[ "$tree" == "$(git -C "$repo" rev-parse "refs/wip/$topic^{tree}")" ]]; then
+            log info "no changes since wip/$topic was last pushed"
             return 1
         fi
     fi
 
     if git -C "$repo" rev-parse --verify -q HEAD >/dev/null; then
         if [[ "$tree" == "$(git -C "$repo" rev-parse 'HEAD^{tree}')" ]]; then
+            log info "working tree matches HEAD; nothing to snapshot"
             return 1
         fi
         parent="$(git -C "$repo" rev-parse HEAD)"
         commit="$(git -C "$repo" commit-tree "$tree" -p "$parent" -m "wip: $topic")"
     else
         if [[ -z "$(git -C "$repo" ls-tree -r --name-only "$tree")" ]]; then
+            log info "no tracked or untracked files; nothing to snapshot"
             return 1
         fi
         commit="$(git -C "$repo" commit-tree "$tree" -m "wip: $topic")"
@@ -221,7 +224,6 @@ main() {
     fi
 
     if ! commit="$(snapshot "$repo" "$topic")"; then
-        log warn "nothing to snapshot in $repo"
         return 0
     fi
 
@@ -235,13 +237,11 @@ main() {
         return 1
     fi
 
-    git -C "$repo" update-ref "refs/wip/$topic" "$commit"
-
     log ok "snapshot $commit for wip/$topic"
     git -C "$repo" diff --stat HEAD "$commit" 2>/dev/null || git -C "$repo" show --stat --oneline "$commit"
 
     if ((dry_run == 1)); then
-        log info "dry run; snapshot only"
+        log info "dry run; not recorded, not pushed"
         return 0
     fi
 
@@ -254,6 +254,7 @@ main() {
     fi
 
     git -C "$repo" push --force "$target" "$commit:refs/heads/wip/$topic"
+    git -C "$repo" update-ref "refs/wip/$topic" "$commit"
     log ok "pushed wip/$topic to $target"
 }
 

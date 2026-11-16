@@ -23,19 +23,19 @@ atlassian-cli jira issue get PROJ-1234 --fields all --format json
 
 ## Search
 
-Two equivalent entry points — pick by intent:
+Two equivalent entry points. Pick by intent:
 
 ```bash
-# JQL — for ad-hoc queries
+# JQL, for ad-hoc queries
 atlassian-cli jira issue search --jql 'project = PROJ AND status = Open ORDER BY created DESC' --format json
 atlassian-cli jira issue search --jql 'assignee = @me AND sprint in openSprints()' --format json
 
-# structured filters — when the user gives a flat list of conditions
+# structured filters, when the user gives a flat list of conditions
 atlassian-cli jira issue search --project PROJ --status Open --status "In Progress" --format json
 atlassian-cli jira issue search --assignee @me --priority High --format json
 ```
 
-`--jql` and the filter flags conflict with each other; pick one. `--status` is repeatable for OR semantics. When the user asks "show me my open tickets" or "find issues assigned to X", default to JQL — it composes and the agent can read it back to the user.
+`--jql` and the filter flags conflict with each other; pick one. `--status` is repeatable for OR semantics. When the user asks "show me my open tickets" or "find issues assigned to X", default to JQL. It composes, and the agent can read it back to the user.
 
 `--limit` caps the result count; pass it explicitly whenever a query could be wide. For exhaustive runs, iterate with the cursor / page token the response exposes (or run JQL in chunks).
 
@@ -87,7 +87,7 @@ atlassian-cli jira fields list --format json | jq '.[] | {id, name}'
 atlassian-cli jira fields get <id> --format json
 ```
 
-The CLI rejects `--field` keys that collide with reserved names (`project`, `issuetype`, `summary`) or with typed flags. For multi-value fields (arrays, option lists), pass a JSON array; for single values, a single object — see the CLI's own `--help` examples when in doubt.
+The CLI rejects `--field` keys that collide with reserved names (`project`, `issuetype`, `summary`) or with typed flags. For multi-value fields (arrays, option lists), pass a JSON array; for single values, a single object. See the CLI's own `--help` examples when in doubt.
 
 Completion criterion: the response contains a new issue key (e.g. `PROJ-1234`); if the user gave a summary, the returned `summary` matches it exactly.
 
@@ -101,28 +101,40 @@ atlassian-cli jira issue update <KEY> --field 'customfield_10001={"value":"Beta"
 atlassian-cli jira issue update <KEY> --add-label <label> --format json
 ```
 
-**Always re-read with `issue get` after an update** when the user is depending on the new value — updates can return 200 with stale state if Jira indexed lazily.
+**Always re-read with `issue get` after an update** when the user is depending on the new value. Updates can return 200 with stale state if Jira indexed lazily.
 
 ## Transition status
 
 ```bash
-# discover valid transitions
-atlassian-cli jira issue transition <KEY> --list --format json
+# list the transitions available now (id, name, and the status each one leads to)
+atlassian-cli jira issue transitions <KEY> --format json
 
-# execute one
-atlassian-cli jira issue transition <KEY> --to "In Progress" --format json
-atlassian-cli jira issue transition <KEY> --to "Done" --comment "Closing per <reason>" --format json
+# preview, then move the issue to a status
+atlassian-cli jira issue transition <KEY> --to-status Done --dry-run
+atlassian-cli jira issue transition <KEY> --to-status Done
+
+# move by transition name or ID instead
+atlassian-cli jira issue transition <KEY> --transition "Resolved"
 ```
 
-Statuses are workflow-specific strings. Do **not** guess — run `--list` first, then transition by exact name. The CLI returns the available `to` names in the `--list` response; copy them verbatim.
+`--to-status` names the status you want. The CLI walks the workflow one transition at a time until the issue reaches it, up to `--max-hops` (default 10). Prefer it over `--transition`: transition names rarely match the status they lead to.
+
+Workflow status names are exact strings. Read them from the `to` field of `transitions`, and copy them verbatim.
+
+`transition` has no `--comment` flag. To record a reason, run `comments add` after the move.
+
+`--dry-run` prints the path the CLI will take and sends nothing, for example `In Review -> Done  via "Done"`. Run it on every issue before a bulk move, and read the path. A path through intermediate statuses changes the issue history, so confirm it with the user first.
+
+Completion criterion: `issue search --jql 'key in (<KEYS>)' --fields key,status` shows the target status on every key. A `✅` line from `transition` alone is not proof.
 
 ## Comments
 
-Read the comment thread to understand a ticket:
-
 ```bash
-atlassian-cli jira issue comments <KEY> --format json
+atlassian-cli jira issue comments list <KEY> --format json    # author, created, body_preview, id
+atlassian-cli jira issue comments add <KEY> --body "<text>"
 ```
+
+`comments` needs a subcommand (`list`, `add`, `update`, `delete`). `comments <KEY>` fails with `unrecognized subcommand`. Do not hide stderr when you read comments: an empty result and a failed command look the same without it.
 
 ## Escape hatch
 
